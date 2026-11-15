@@ -939,6 +939,28 @@ class ServerpodProcessController extends ChangeNotifier
     if (ok ?? false) requestPreviewReload();
   }
 
+  /// Hot-restarts a preview whose app never started in the page.
+  ///
+  /// The pane calls this when it has waited out a load and the app's `main()`
+  /// still has not run, which otherwise leaves a blank page reported as
+  /// running. A hot restart is what brings such a page back by hand, and a
+  /// Full Restart costs minutes.
+  ///
+  /// True when the restart went through and asked for the preview's hard
+  /// reload, which then reveals the page itself. False when nothing was
+  /// restarted — the app is already live, no restart is possible now, or the
+  /// runner refused — and the pane has to reveal what it has.
+  Future<bool> recoverStalledPreview() async {
+    if (!previewReady || _live || !canHotRestart) return false;
+    log.addLocal(
+      'The app did not start in the preview. Hot restarting it.',
+      level: RunnerLogLevel.warning,
+    );
+    final token = _previewReloadToken;
+    await hotRestart();
+    return _previewReloadToken != token;
+  }
+
   @override
   Future<MigrationResult?> createMigration({bool force = false}) =>
       _migration(
