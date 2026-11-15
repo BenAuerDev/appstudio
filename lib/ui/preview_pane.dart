@@ -6,6 +6,7 @@ import 'package:shad/shad.dart';
 import 'package:webview_cef/webview_cef.dart';
 
 import '../platform/compact_window.dart';
+import '../preview/phone_chassis_painter.dart';
 import '../preview/preview_bootstrap.dart';
 import '../preview/preview_cache_purge.dart';
 import '../preview/preview_device.dart';
@@ -226,9 +227,7 @@ class PreviewPaneState extends State<PreviewPane> {
             ScriptInjectTime.LOAD_START,
           ),
         )
-        ..add(
-          UserScript(previewBootstrapScript, ScriptInjectTime.LOAD_START),
-        );
+        ..add(UserScript(previewBootstrapScript, ScriptInjectTime.LOAD_START));
 
       final controller = WebviewManager().createWebView(
         loading: const SizedBox.shrink(),
@@ -242,7 +241,8 @@ class PreviewPaneState extends State<PreviewPane> {
       _appliedBrightness = widget.mode.previewBrightness;
       _lastReloadToken = widget.process.previewReloadToken;
       final projectPath = widget.process.session.projectPath;
-      final staleProfile = projectPath != null &&
+      final staleProfile =
+          projectPath != null &&
           _cefProfileProjectPath != null &&
           _cefProfileProjectPath != projectPath;
       if (staleProfile) {
@@ -290,9 +290,11 @@ class PreviewPaneState extends State<PreviewPane> {
     _lastReloadToken = 0;
     _appliedBrightness = null;
     _loadedUrl = null;
-    unawaited(_disposeController().then((_) {
-      if (mounted) setState(() {});
-    }));
+    unawaited(
+      _disposeController().then((_) {
+        if (mounted) setState(() {});
+      }),
+    );
   }
 
   void _onWebViewReadyChanged() {
@@ -496,10 +498,7 @@ class PreviewPaneState extends State<PreviewPane> {
       return framed;
     }
 
-    return _PhonePreviewViewport(
-      viewport: viewport,
-      child: framed,
-    );
+    return _PhonePreviewViewport(viewport: viewport, child: framed);
   }
 
   Widget _buildSurfaceStack({required Size viewport}) {
@@ -507,9 +506,7 @@ class PreviewPaneState extends State<PreviewPane> {
     final phase = widget.process.phase;
     final processError = widget.process.error;
     final overlayError = _error ?? processError;
-    final cefReady = controller != null &&
-        !_initializing &&
-        controller.value;
+    final cefReady = controller != null && !_initializing && controller.value;
     final cefLoading = _shouldLoad && !cefReady && overlayError == null;
 
     Widget surface;
@@ -521,10 +518,9 @@ class PreviewPaneState extends State<PreviewPane> {
             return const ColoredBox(color: Color(0xFF12122A));
           }
           final viewMode = widget.mode.viewMode;
-          final phoneViewport =
-              viewMode.displayMode == PreviewDisplayMode.phone
-                  ? viewport
-                  : null;
+          final phoneViewport = viewMode.displayMode == PreviewDisplayMode.phone
+              ? viewport
+              : null;
           return PreviewSurfaceSync(
             controller: controller,
             explicitSize: phoneViewport,
@@ -713,10 +709,7 @@ class _PhonePreviewViewport extends StatelessWidget {
       ),
     );
     if (overlay != null) {
-      content = Stack(
-        fit: StackFit.expand,
-        children: [content, overlay!],
-      );
+      content = Stack(fit: StackFit.expand, children: [content, overlay!]);
     }
 
     return Padding(
@@ -732,10 +725,7 @@ class _PhonePreviewViewport extends StatelessWidget {
 }
 
 class _PhoneDeviceFrame extends StatelessWidget {
-  const _PhoneDeviceFrame({
-    required this.viewport,
-    required this.child,
-  });
+  const _PhoneDeviceFrame({required this.viewport, required this.child});
 
   final Size viewport;
   final Widget child;
@@ -743,30 +733,24 @@ class _PhoneDeviceFrame extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDarkShell = ShadTheme.of(context).brightness == Brightness.dark;
-    final bezelColor =
-        isDarkShell ? const Color(0xFF2A2A2E) : const Color(0xFF1C1C1E);
+    final landscape = viewport.width > viewport.height;
+    const inset = previewPhoneBezel + previewPhoneHardwareOverhang;
+    final screenRadius = BorderRadius.circular(previewPhoneCornerRadius);
 
-    return Container(
-      padding: const EdgeInsets.all(previewPhoneBezel),
-      decoration: BoxDecoration(
-        color: bezelColor,
-        borderRadius: BorderRadius.circular(previewPhoneOuterCornerRadius),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: isDarkShell ? 0.55 : 0.28),
-            blurRadius: 28,
-            offset: const Offset(0, 10),
+    return CustomPaint(
+      painter: PhoneChassisPainter(landscape: landscape, dark: isDarkShell),
+      child: Padding(
+        padding: const EdgeInsets.all(inset),
+        child: DecoratedBox(
+          // The glass edge: a hairline over the screen where it meets the
+          // bezel, which is what makes the screen read as set into the body.
+          position: DecorationPosition.foreground,
+          decoration: BoxDecoration(
+            borderRadius: screenRadius,
+            border: Border.all(color: Colors.black.withValues(alpha: 0.7)),
           ),
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.12),
-            blurRadius: 6,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(previewPhoneCornerRadius),
-        child: child,
+          child: ClipRRect(borderRadius: screenRadius, child: child),
+        ),
       ),
     );
   }
