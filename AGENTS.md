@@ -1187,6 +1187,23 @@ install. Sparkle would also catch it, but later and less clearly.
   localStorage survives a Full Restart within one session. Keeping the profile
   in-memory (the `cache_path` note below) is unchanged — this is about state
   crossing projects inside one app run, not across launches.
+- **A page whose app never started is hot-restarted, not revealed.**
+  `_waitForFlutterMain` gives up after 8 s; it used to call
+  `markPreviewLive()` regardless, which dropped the overlay onto a blank page,
+  set the phase to ready and raised "Your project has started" over it —
+  seen after creating a project, and cured by pressing Hot Restart. Now the
+  first load (and the reload a project switch does) calls
+  `recoverStalledPreview()` instead: the runner's hot restart, whose own hard
+  reload reveals the page. Once per load — a reload a hot restart asked for
+  never recovers, or a page that never starts would restart forever — and
+  when no restart is possible the page is revealed as before. A Full Restart
+  costs minutes and is not the fallback. The root cause of the stall was not
+  found; a second `main()` and a reload mid-load were both tested and ruled
+  out.
+- **Process changes that land while the webview initializes are caught up
+  afterwards** (`_ensureWebView`'s `finally`). They used to be dropped until
+  the runner next notified. Not after a failed init, which would retry at once
+  forever.
 - **The runner is not racing us.** The runner's `hotRestart` awaits the full compile, the server reboot, the Flutter apps' hot restart and its own browser refresh before it answers — so by the time `ServerpodProcessController` bumps the token, the web server is already serving the new output. If the preview still shows old code, it is a cache and not timing.
 - The header's reload button is **gone on purpose.** Hot Restart now force-reloads the preview itself, so the button's only remaining job was papering over a reload that had not happened — and the honest fix for that is the token, not a second control that does the same thing by hand.
 - **Backdrop:** CEF composites with alpha, so an opaque `ColoredBox` (`previewBackdropColor`) sits under the surface, following the *previewed* app's brightness, not the shell's.

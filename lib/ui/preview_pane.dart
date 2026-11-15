@@ -66,7 +66,13 @@ class PreviewPaneState extends State<PreviewPane> {
 
   bool get _shouldLoad => widget.process.previewReady;
 
-  Future<void> reload() async {
+  /// Hard-reloads the preview.
+  ///
+  /// [recoverIfStalled] is for a reload that is part of the first load — the
+  /// one a project switch does. A reload that a hot restart asked for must
+  /// not recover through another hot restart, or a page that never starts
+  /// would restart the app forever.
+  Future<void> reload({bool recoverIfStalled = false}) async {
     if (!_shouldLoad) return;
     final controller = _controller;
     if (controller == null || !controller.value) {
@@ -74,27 +80,36 @@ class PreviewPaneState extends State<PreviewPane> {
       return;
     }
     final revealGeneration = ++_revealGeneration;
+    bool isCancelled() =>
+        !mounted ||
+        _controller != controller ||
+        revealGeneration != _revealGeneration;
     try {
       // Hard reload, and it has to be hard on both sides: a service worker or a
       // Cache Storage entry outlives the navigation and would answer the new
       // document out of the previous build, and a plain navigation re-serves
       // the cached `main.dart.js` — so a rebuilt app would look unchanged.
       await _purgePageCaches(controller);
-      if (!mounted || revealGeneration != _revealGeneration) return;
+      if (isCancelled()) return;
       await controller.reloadIgnoreCache();
-      await _waitForFlutterMain(
+      final started = await _waitForFlutterMain(
         controller,
-        isCancelled: () =>
-            !mounted ||
-            _controller != controller ||
-            revealGeneration != _revealGeneration,
+        isCancelled: isCancelled,
       );
-      if (!mounted || revealGeneration != _revealGeneration) return;
+      if (isCancelled()) return;
+      // A page whose app never started would be revealed blank and
+      // announced as running. A hot restart is what brings it back by hand.
+      if (!started &&
+          recoverIfStalled &&
+          await widget.process.recoverStalledPreview()) {
+        return;
+      }
+      if (isCancelled()) return;
       // The theme shim is injected at load start with the brightness captured
       // when the webview was created, so a reload resets it — re-apply.
       _appliedBrightness = null;
       await _applyPreviewTheme(widget.mode.previewBrightness);
-      if (!mounted || revealGeneration != _revealGeneration) return;
+      if (isCancelled()) return;
       widget.process.markPreviewLive();
       if (mounted) setState(() {});
     } catch (e) {
@@ -254,7 +269,7 @@ class PreviewPaneState extends State<PreviewPane> {
         // The initial navigation above may already have been answered out of
         // the old state; reload() re-fetches past every cache and keeps the
         // overlay up until this project's own app is live.
-        await reload();
+        await reload(recoverIfStalled: true);
       } else {
         if (projectPath != null) {
           _cefProfileProjectPath = projectPath;
@@ -266,7 +281,15 @@ class PreviewPaneState extends State<PreviewPane> {
       await _disposeController();
     } finally {
       _initializing = false;
-      if (mounted) setState(() {});
+      if (mounted) {
+        setState(() {});
+        // Every process change that landed mid-init was skipped — a new URL,
+        // a stop, a reload — and nothing would ask again until the runner
+        // next notified, which a page that never connects never makes it do.
+        // Not after a failure: that would retry the failed init at once, and
+        // forever.
+        if (_error == null) _onProcessChanged();
+      }
     }
   }
 
@@ -305,14 +328,18 @@ class PreviewPaneState extends State<PreviewPane> {
 
   Future<void> _revealWhenAppReady(WebViewController controller) async {
     final revealGeneration = ++_revealGeneration;
-    await _waitForFlutterMain(
+    bool isCancelled() =>
+        !mounted ||
+        _controller != controller ||
+        revealGeneration != _revealGeneration;
+    final started = await _waitForFlutterMain(
       controller,
-      isCancelled: () =>
-          !mounted ||
-          _controller != controller ||
-          revealGeneration != _revealGeneration,
+      isCancelled: isCancelled,
     );
-    if (!mounted || revealGeneration != _revealGeneration) return;
+    if (isCancelled()) return;
+    // See [reload]: a hot restart's own hard reload reveals the page instead.
+    if (!started && await widget.process.recoverStalledPreview()) return;
+    if (isCancelled()) return;
     widget.process.markPreviewLive();
     if (mounted) setState(() {});
   }
@@ -344,8 +371,13 @@ class PreviewPaneState extends State<PreviewPane> {
     }
   }
 
-  /// Keeps the overlay up until Flutter web has actually started (or we time out).
-  Future<void> _waitForFlutterMain(
+  /// Keeps the overlay up until Flutter web has actually started. True once
+  /// it has; false when it was cancelled or timed out first.
+  ///
+  /// A freshly created project's app reaches `main()` about 2.3 s after
+  /// navigation on an idle Mac, so the 8 s here leaves room for one that is
+  /// still compiling the server and starting Postgres.
+  Future<bool> _waitForFlutterMain(
     WebViewController controller, {
     required bool Function() isCancelled,
   }) async {
@@ -353,16 +385,17 @@ class PreviewPaneState extends State<PreviewPane> {
     const maxAttempts = 40;
     const delay = Duration(milliseconds: 200);
     for (var i = 0; i < maxAttempts; i++) {
-      if (isCancelled()) return;
+      if (isCancelled()) return false;
       try {
         final result = await controller.evaluateJavascript(
           'window.\$dartMainExecuted === true || '
           'document.querySelector("flt-glass-pane, flt-scene-host, flutter-view") != null',
         );
-        if (result == true || result == 'true') return;
+        if (result == true || result == 'true') return true;
       } catch (_) {}
       await Future<void>.delayed(delay);
     }
+    return false;
   }
 
   Future<void> _disposeController() async {

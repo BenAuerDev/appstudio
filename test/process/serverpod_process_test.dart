@@ -471,6 +471,71 @@ void main() {
       expect(process.previewReloadToken, before);
     });
 
+    group('a preview whose app never started', () {
+      Future<FakeRunner> previewing() async {
+        final runner = await projectWithRunner(
+          snapshot: {
+            'flutterApps': [demoApp],
+            'runningFlutterApps': ['demo'],
+            'flutterAppUrls': {'demo': 'http://localhost:51234'},
+          },
+        );
+        await open(runner);
+        expect(process.phase, PreviewPhase.connecting);
+        return runner;
+      }
+
+      test('is hot-restarted, and the reload reveals it', () async {
+        final runner = await previewing();
+        final before = process.previewReloadToken;
+
+        expect(await process.recoverStalledPreview(), isTrue);
+
+        expect(runner.calls, contains('hotRestart'));
+        expect(process.previewReloadToken, before + 1);
+        // Still waiting: the reload's own wait is what marks it live.
+        expect(process.phase, PreviewPhase.connecting);
+        expect(
+          process.log.serverItems
+              .whereType<RunnerLogRecord>()
+              .map((r) => r.message),
+          contains('The app did not start in the preview. Hot restarting it.'),
+        );
+      });
+
+      test('is left to the pane when the restart is refused', () async {
+        final runner = await previewing();
+        runner.failures['hotRestart'] = 'Compilation failed.';
+        final before = process.previewReloadToken;
+
+        expect(await process.recoverStalledPreview(), isFalse);
+        expect(process.previewReloadToken, before);
+      });
+
+      test('is not restarted once it is live', () async {
+        final runner = await previewing();
+        process.markPreviewLive();
+
+        expect(await process.recoverStalledPreview(), isFalse);
+        expect(runner.calls, isNot(contains('hotRestart')));
+      });
+
+      test('is not restarted before the server is running', () async {
+        final runner = await projectWithRunner(
+          stage: 'starting',
+          snapshot: {
+            'flutterApps': [demoApp],
+            'runningFlutterApps': ['demo'],
+            'flutterAppUrls': {'demo': 'http://localhost:51234'},
+          },
+        );
+        await open(runner);
+
+        expect(await process.recoverStalledPreview(), isFalse);
+        expect(runner.calls, isNot(contains('hotRestart')));
+      });
+    });
+
     test('a migration refused for warnings comes back for a force', () async {
       final runner = await projectWithRunner();
       runner.replies['createMigration'] = (params) => params['force'] == true
