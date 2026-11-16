@@ -884,8 +884,9 @@ is greyed out (Phase 5).
 
 - **Runner:**
   - Product metadata: Serverpod, "App Studio".
-  - The App Studio icon, built from the macOS PNGs by
-    `tool/windows/make_icon.dart` (PNG entries in an `.ico`).
+  - The App Studio icon. It was first built from the macOS PNGs by
+    `tool/windows/make_icon.dart`; the icon set now ships its own Windows
+    artwork as an `.ico`, which is copied in as is, and the script is gone.
   - One instance at a time: the `Serverpod.AppStudio.Running` mutex; a
     second launch brings the first window forward.
   - AppUserModelID `Serverpod.AppStudio`.
