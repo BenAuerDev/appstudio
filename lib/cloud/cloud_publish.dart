@@ -268,8 +268,9 @@ class CloudPublishRun extends ChangeNotifier implements CloudPublishView {
       }
       _pty = pty;
       if (_stopRequested) pty.kill();
-      await registerDevSessionPid(DevProcessKind.cloudPublish, pty.pid);
 
+      // Wired before anything else is awaited: from here on the user can
+      // type, and a keystroke sent before `onOutput` is set is simply lost.
       // Chunked, so a multi-byte character split across two reads still
       // decodes.
       final decoded = const Utf8Decoder(
@@ -279,6 +280,8 @@ class CloudPublishRun extends ChangeNotifier implements CloudPublishView {
       terminal.onOutput = (data) => _pty?.write(utf8.encode(data));
       terminal.onResize = (width, height, _, _) =>
           _pty?.resize(columns: width, rows: height);
+
+      await registerDevSessionPid(DevProcessKind.cloudPublish, pty.pid);
 
       final code = await pty.done;
       decoded.close();
