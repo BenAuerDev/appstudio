@@ -190,6 +190,7 @@ class ServerpodProcessController extends ChangeNotifier
     final at = now ?? DateTime.now();
     Duration? settlesIn;
     for (final operation in log.activeOperations.reversed) {
+      if (_isStream(operation.label)) continue;
       final age = at.difference(operation.startedAt);
       if (age >= kStatusOperationDelay) {
         return ServerStatus.busy(_sentence(operation.label));
@@ -236,6 +237,12 @@ class ServerpodProcessController extends ChangeNotifier
       .replaceAll(RegExp(r'[.…\s]+$'), '');
 
   static const _firstRunAside = ' (first run may take 30-60s)';
+
+  /// An open method stream (`STREAM <endpoint>.<method>`, from the pod's
+  /// session log). It stays in flight for as long as a client is connected —
+  /// the whole time the app runs — so it says nothing about what the server
+  /// is doing and would hold the spinner up forever. The log still shows it.
+  static bool _isStream(String label) => label.startsWith('STREAM ');
 
   /// Whether the attached runner is one App Studio started, and so stops.
   bool get ownsRunner => _owned;

@@ -699,6 +699,30 @@ void main() {
       expect(later.message, 'greeting.hello');
     });
 
+    test('an open method stream never shows, however long it runs', () async {
+      final runner = await projectWithRunner(
+        snapshot: {
+          'flutterApps': [demoApp],
+          'runningFlutterApps': ['demo'],
+          'flutterAppUrls': {'demo': 'http://localhost:51234'},
+        },
+      );
+      await open(runner);
+      process.markPreviewLive();
+      final started = DateTime.now().subtract(const Duration(minutes: 5));
+      runner.emit({
+        'event': 'operationStarted',
+        'id': 'stream',
+        'label': 'STREAM greeting.watch',
+        'startedAt': started.toIso8601String(),
+      });
+      await until(() => process.log.activeOperations.isNotEmpty);
+
+      final status = process.serverStatus();
+      expect(status, const ServerStatus.running());
+      expect(status.settlesIn, isNull);
+    });
+
     test('a failed build is stopped, with the reason in the detail', () async {
       final runner = await projectWithRunner(stage: 'degraded');
       await open(runner);

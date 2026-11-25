@@ -387,6 +387,10 @@ toggle that used to lead the bar is Logs → Show/Hide Logs.
   call included — and those last milliseconds; shown at once, a busy server
   would flicker a spinner on every request. A younger one is waited out:
   `ServerStatus.settlesIn` tells the indicator when to look again.
+- **Open method streams (`STREAM <endpoint>.<method>`) are never shown.** A
+  stream is in flight for as long as a client stays connected, so it held the
+  spinner up for the whole run of an app that streams. The status skips it;
+  the log still records it.
 - Runner labels lose the trailing dots the CLI writes for a terminal.
 
 ### The Logs menu, and `LogViewController`
