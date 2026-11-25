@@ -350,10 +350,21 @@ the log pane carries no actions.
 
 ### The server status replaced the project name and path
 
-The toolbar starts with `ServerStatusIndicator`: a green dot (running), a red
+The toolbar starts with a **back button** (`chevronLeft`, ghost), then
+`ServerStatusIndicator`: a green dot (running), a red
 rounded square (stopped, failed or failed to build — the reason in the
 tooltip), or a spinner beside the latest thing the runner is doing. The panel
 toggle that used to lead the bar is Logs → Show/Hide Logs.
+
+- **Back closes the project**, exactly as File → Close does — the server is
+  stopped first, then the start page comes back. `StudioShell._closeProject`
+  guards a second press while the stop is still running.
+- **While the server is stopped, the status carries View Logs and Try Again**
+  (`ui/server_status_bar.dart`). View Logs opens the panel on the server log;
+  Try Again is Full Restart (`FullRestartView.restart`), so on a failed build it
+  is `retryStart`, like the icon. They hide while the restart is in flight.
+  They fold to icon buttons (`FirstThatFits`) rather than claim more than
+  `minStatusWidth`: the stopped messages are short, which is what leaves room.
 
 - **It is the only place an operation in flight is shown.** The log's pinned
   footer of running operations was dropped once the status named them: the log
@@ -1724,15 +1735,16 @@ that could not work — there is no Flutter SDK to build with yet.
   change either way, and light chrome on it would be dark text on a photograph.
   Dialogs raised from these screens are `Navigator` routes and so are *not*
   covered — they sit above the scaffold and keep the app's theme.
-- **The backdrop is drawn, not loaded.** `_LandingBackground` is one vertical
-  `LinearGradient` — black at the banner, through navy and indigo, to orchid at
-  the floor. It replaced a 19 KB WebP that had to be decoded and rescaled on
-  every resize and letterboxed by hand to keep its aspect ratio. Retune the
-  whole backdrop by editing that one stop list. The stops bunch through the
-  middle deliberately: spread evenly, the indigo-to-purple leg bands visibly
-  down a tall window.
+- **The backdrop is the Serverpod design system's action gradient.**
+  `_LandingBackground` is one vertical `LinearGradient` of the six
+  `action-gradient-0`…`-100` tokens — near black at the banner, through indigo,
+  to blue at the floor — the background the design system gives a hero
+  *without* a feature image, and the same on every Serverpod product page. Its
+  other hero background, the `hero-cloud.webp` picture with the cyan glow, is
+  for heroes with a feature image and must not be recreated in code. Change
+  the stops only by changing the design system.
 - **Both landing surfaces are white glass, and that is downstream of the
-  gradient.** The action cards (`kLandingCardSurface`) sit in the middle of it;
+  gradient.** The action frames (`kLandingActionFrameSurface`) sit in the middle of it;
   the recents panel (`kLandingPanelSurface` / `kLandingPanelBorder`) is thinner
   so the deepest part still reads through. This only works because the drawn
   backdrop stays dark at the bottom — the photograph it replaced washed out to
@@ -1741,10 +1753,13 @@ that could not work — there is no Flutter SDK to build with yet.
   light-bottomed backdrop and that inversion comes back with it. Everything with
   an obvious slot rides in the scheme (`primary`, `card`, `accent`, `border`,
   `mutedForeground`); the panel is the exception, having no token of its own.
-- **Both landing actions are the same pink** (`kLandingActionColor`, pink-600).
-  Creating and opening are the two ways in, not a choice with a recommended
-  answer, so neither gets primary/secondary weighting — and the app's brand blue
-  is a poor neighbour to the blues this gradient starts in.
+- **Both landing actions are the design system's `action` blue**
+  (`kLandingActionColor` #1973D6, hovering to `kLandingActionHoverColor`
+  #1561B4), each in the hero action's glass frame (`kLandingActionFrameSurface`
+  / `kLandingActionFrameBorder`). Creating and opening are the two ways in, not
+  a choice with a recommended answer, so neither gets primary/secondary
+  weighting. Not `kBrandBlue`: that is the app's accent, tuned for its own
+  surfaces.
 - **Nothing over the backdrop may leave a text colour unset.** A shad text role
   with no colour falls through to the `DefaultTextStyle` `ShadApp` installed
   from the *app* theme, which is the one thing on these screens that still

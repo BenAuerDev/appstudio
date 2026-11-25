@@ -246,10 +246,10 @@ ShadThemeData buildDarkTheme() => _buildTheme(Brightness.dark, darkColorScheme);
 /// lifted off it; the recents panel sits at the floor and is thinner, so the
 /// deepest part of the gradient still reads through it.
 ///
-/// White throughout only because the backdrop is drawn rather than
-/// photographed — see `_LandingBackground`. The image it replaced washed out to
-/// pale pink at the bottom, where a white scrim lightens an already-light
-/// surface, and the panel had to be black to survive it.
+/// White throughout only because the backdrop stays dark enough at the floor —
+/// see `_LandingBackground`. An earlier photograph washed out to pale pink at
+/// the bottom, where a white scrim lightens an already-light surface, and the
+/// panel had to be black to survive it.
 const kLandingCardSurface = Color(0x1FFFFFFF);
 const kLandingPanelSurface = Color(0x14FFFFFF);
 const kLandingPanelBorder = Color(0x24FFFFFF);
@@ -261,9 +261,20 @@ const _kLandingMutedForeground = Color(0xC7FFFFFF);
 /// text that should recede without picking up a hue, such as a project's path.
 const kLandingSubduedForeground = Color(0xB3FFFFFF);
 
-/// The landing actions. Pink rather than the app's brand blue, which is a poor
-/// neighbour to the blues this gradient starts in.
-const kLandingActionColor = Color(0xFFDB2777); // pink-600
+/// The landing actions: the Serverpod design system's `action` blue, the
+/// primary button fill on its hero backgrounds, and `action-hover`. White
+/// labels hold 4.7:1 and 6.2:1 on them.
+///
+/// Not the app's brand blue (`kBrandBlue`), which is lighter and was tuned as
+/// an accent on the app's own surfaces rather than on this gradient.
+const kLandingActionColor = Color(0xFF1973D6);
+const kLandingActionHoverColor = Color(0xFF1561B4);
+
+/// The design system's glass frame around a hero button (`action-frame-bg`,
+/// `action-frame-border`): fainter than the other landing glass, so the button
+/// is what reads.
+const kLandingActionFrameSurface = Color(0x0DFFFFFF);
+const kLandingActionFrameBorder = Color(0x1AFFFFFF);
 
 /// The outer radius a [padding]-wide card needs for its border to look the same
 /// thickness all the way round a child with [inner] corners.
