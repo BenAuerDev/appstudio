@@ -1,3 +1,4 @@
+import 'package:appstudio/cloud/cloud_publish.dart';
 import 'package:appstudio/preview/preview_device.dart';
 import 'package:appstudio/preview/preview_phase.dart';
 import 'package:appstudio/preview/registration_code_toast.dart';
@@ -15,6 +16,7 @@ import 'package:appstudio/ui/publish_to_cloud_button.dart';
 import 'package:flutter/material.dart';
 import 'package:widgetbook/widgetbook.dart';
 
+import '../fakes/cloud.dart';
 import '../fakes/project.dart';
 import '../fakes/runner.dart';
 import '../fakes/tools.dart';
@@ -224,9 +226,28 @@ final projectFolder = WidgetbookFolder(
     WidgetbookComponent(
       name: 'Publish to Cloud',
       useCases: [
+        for (final (name, run) in <(String, FakeCloudPublishRun Function())>[
+          ('Running', FakeCloudPublishRun.running),
+          (
+            'Stopping',
+            () => FakeCloudPublishRun(phase: CloudPublishPhase.cancelling),
+          ),
+          ('Done', FakeCloudPublishRun.succeeded),
+          (
+            'Done, no project id found',
+            () => FakeCloudPublishRun(phase: CloudPublishPhase.succeeded),
+          ),
+          ('Failed', FakeCloudPublishRun.failed),
+          ('Could not start', FakeCloudPublishRun.couldNotStart),
+          ('Cancelled', FakeCloudPublishRun.cancelled),
+        ])
+          WidgetbookUseCase(
+            name: name,
+            builder: (_) => _overStudio(PublishToCloudDialog(run: run())),
+          ),
         WidgetbookUseCase(
-          name: 'Default',
-          builder: (_) => _overStudio(const PublishToCloudDialog()),
+          name: 'Stop publishing?',
+          builder: (_) => _overStudio(const CancelPublishDialog()),
         ),
       ],
     ),

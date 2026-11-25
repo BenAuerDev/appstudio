@@ -26,6 +26,7 @@ import 'package:appstudio/ui/toolchain/tools_view.dart';
 import 'package:flutter/material.dart';
 import 'package:shad/shad.dart';
 
+import 'fakes/cloud.dart';
 import 'fakes/project.dart';
 import 'fakes/runner.dart';
 import 'fakes/tools.dart';
@@ -120,6 +121,7 @@ class StudioWindowMock extends StatelessWidget {
                 editors: const [cursorEditor, claudeEditor],
                 canOpen: phase == PreviewPhase.ready,
               ),
+          publisher: FakeCloudPublisher(),
           onManageTools: () {},
         ),
         Expanded(

@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:appstudio/agent/agent_controller.dart';
+import 'package:appstudio/cloud/cloud_publish.dart';
 import 'package:appstudio/process/serverpod_process.dart';
 import 'package:appstudio/session/project_session.dart';
 import 'package:appstudio/toolchain/toolchain_controller.dart';
@@ -69,6 +70,10 @@ void main() {
         toolchains: toolchains,
         process: process,
         agent: agent,
+        cloud: CloudPublishController(
+          toolchains: process.toolchains,
+          session: process.session,
+        ),
       );
 
   Future<UninstallResult> run({Set<ToolId> tools = const {}}) =>

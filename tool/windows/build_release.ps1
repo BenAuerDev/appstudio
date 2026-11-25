@@ -62,9 +62,11 @@ try {
 
 $bundle = Join-Path $RepoRoot 'build\windows\x64\runner\Release'
 Write-Step 'Checking the bundle'
+# flutter_pty2.dll is a native asset (Publish to Cloud's terminal), built by
+# the package's hook rather than CMake, so nothing else would notice it gone.
 foreach ($file in 'appstudio.exe', 'flutter_windows.dll', 'libcef.dll',
                   'WinSparkle.dll', 'vcruntime140.dll', 'vcruntime140_1.dll',
-                  'msvcp140.dll', 'data\app.so') {
+                  'msvcp140.dll', 'flutter_pty2.dll', 'data\app.so') {
   if (-not (Test-Path (Join-Path $bundle $file))) {
     throw "The release bundle has no $file."
   }

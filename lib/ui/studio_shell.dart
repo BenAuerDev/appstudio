@@ -17,6 +17,7 @@ import '../toolchain/toolchain_controller.dart';
 import 'new_project_dialog.dart';
 import 'preview_pane.dart';
 import 'settings/settings_dialog.dart';
+import '../cloud/cloud_publish.dart';
 import 'start_page.dart';
 import 'studio_toolbar.dart';
 import 'left_pane.dart';
@@ -31,6 +32,7 @@ class StudioShell extends StatefulWidget {
     required this.process,
     required this.agent,
     required this.editors,
+    required this.cloud,
     required this.themeController,
     required this.previewMode,
     required this.logView,
@@ -41,6 +43,7 @@ class StudioShell extends StatefulWidget {
   final ServerpodProcessController process;
   final AgentController agent;
   final ExternalEditorsView editors;
+  final CloudPublisher cloud;
   final ThemeController themeController;
   final PreviewModeController previewMode;
 
@@ -147,6 +150,7 @@ class _StudioShellState extends State<StudioShell> {
                 process: widget.process,
                 actions: widget.process,
                 editors: widget.editors,
+                publisher: widget.cloud,
               ),
             Expanded(
               child: _Workspace(
