@@ -245,18 +245,15 @@ void main() {
     );
   });
 
-  testWidgets('the Puro/FVM notice comes first, once, on a first launch',
+  testWidgets('the shim notice comes first, and Continue answers it',
       (tester) async {
-    final tools = _ScriptedTools(inventory: emptyInventory)
+    final tools = _ScriptedTools(inventory: fvmWithoutShimInventory)
       ..needsFlutterNotice = true;
     await pumpScreen(tester, tools);
     await settleDialog(tester);
 
-    expect(find.byType(FlutterInstallNotice), findsOneWidget);
-    expect(
-      find.textContaining('Quick Start guide', findRichText: true),
-      findsOneWidget,
-    );
+    expect(find.byType(FlutterShimNotice), findsOneWidget);
+    expect(find.textContaining('App Studio found FVM'), findsOneWidget);
     // Nothing else is started behind it.
     expect(tools.preflights, 0);
 
@@ -264,26 +261,122 @@ void main() {
     await settleDialog(tester);
     await settleDialog(tester);
 
-    expect(find.byType(FlutterInstallNotice), findsNothing);
+    expect(find.byType(FlutterShimNotice), findsNothing);
     expect(tools.needsFlutterNotice, isFalse);
     expect(tools.preflights, 1);
   });
 
+  testWidgets('Check again closes the notice once a shim is found',
+      (tester) async {
+    final tools = _ScriptedTools(inventory: fvmWithoutShimInventory)
+      ..needsFlutterNotice = true
+      ..shimFoundOnRefresh = true;
+    await pumpScreen(tester, tools);
+    await settleDialog(tester);
+
+    await tester.tap(find.text('Check again'));
+    await settleDialog(tester);
+    await settleDialog(tester);
+
+    expect(find.byType(FlutterShimNotice), findsNothing);
+    expect(tools.needsFlutterNotice, isFalse);
+    // Setup carries on to the install, as it would have after Continue.
+    expect(tools.preflights, 1);
+  });
+
+  testWidgets('Check again stays put, and says so, while there is none',
+      (tester) async {
+    final tools = _ScriptedTools(inventory: fvmWithoutShimInventory)
+      ..needsFlutterNotice = true;
+    await pumpScreen(tester, tools);
+    await settleDialog(tester);
+
+    await tester.tap(find.text('Check again'));
+    await settleDialog(tester);
+
+    expect(find.byType(FlutterShimNotice), findsOneWidget);
+    expect(find.textContaining('Still no flutter on your PATH'), findsOneWidget);
+    expect(tools.needsFlutterNotice, isTrue);
+    expect(tools.preflights, 0);
+  });
+
   testWidgets('the notice on its own still holds the setup screen',
       (tester) async {
-    // A first launch with a Flutter that is fine but not standard: nothing to
-    // install, and the notice still has to be answered.
+    // Every tool fine, and FVM with no shim: nothing to install, and the
+    // notice still has to be answered.
     final tools = _ScriptedTools(inventory: completeInventory)
       ..needsFlutterNotice = true;
     expect(tools.needsSetup, isTrue);
 
     await pumpScreen(tester, tools);
     await settleDialog(tester);
-    expect(find.byType(FlutterInstallNotice), findsOneWidget);
+    expect(find.byType(FlutterShimNotice), findsOneWidget);
 
     await tester.tap(find.text('Continue'));
     await settleDialog(tester);
     expect(tools.needsSetup, isFalse);
     expect(tools.preflights, 0);
+  });
+
+  group('shimSteps', () {
+    test('FVM on macOS writes the Serverpod CLI\'s shim', () {
+      final commands = shimSteps(FlutterWrapper.fvm, windows: false)
+          .map((s) => s.command)
+          .join('\n');
+      expect(commands, contains('~/.fvm_shim/flutter'));
+      expect(commands, contains(r'exec fvm flutter "$@"'));
+      expect(commands, contains(r'export PATH="$HOME/.fvm_shim:$PATH"'));
+      expect(commands, contains('fvm global stable'));
+    });
+
+    test('FVM on Windows writes a flutter.bat', () {
+      final commands = shimSteps(FlutterWrapper.fvm, windows: true)
+          .map((s) => s.command)
+          .join('\n');
+      expect(commands, contains(r'.fvm_shim\flutter.bat'));
+      expect(commands, contains('@fvm flutter %*'));
+      expect(commands, isNot(contains('~/')));
+    });
+
+    test('Puro only goes back on PATH', () {
+      expect(
+        shimSteps(FlutterWrapper.puro, windows: false).single.command,
+        r'export PATH="$HOME/.puro/bin:$PATH"',
+      );
+      expect(shimSteps(FlutterWrapper.puro, windows: true).single.command,
+          isNull);
+    });
+  });
+
+  group('manualUpdateCommand for a version-managed Flutter', () {
+    ToolCandidate old(String root, {String? launcher}) => ToolCandidate(
+          id: ToolId.flutter,
+          source: ToolSource.host,
+          fitness: ToolFitness.wrongVersion,
+          root: root,
+          facts: {'channel': 'stable', 'launcher': ?launcher},
+        );
+
+    test('FVM moves its global version, never runs flutter upgrade', () {
+      expect(manualUpdateCommand(old('/Users/a/fvm/versions/3.41.2')),
+          'fvm install stable\nfvm global stable');
+    });
+
+    test('Puro upgrades the environment the SDK is in', () {
+      expect(manualUpdateCommand(old('/Users/a/.puro/envs/stable/flutter')),
+          'puro upgrade stable');
+      expect(
+          manualUpdateCommand(
+              old(r'C:\Users\a\.puro\envs\work\flutter')),
+          'puro upgrade work');
+    });
+
+    test('any other shim gets no command', () {
+      expect(
+        manualUpdateCommand(old('/Users/a/.asdf/installs/flutter/3.41.2',
+            launcher: '/Users/a/.asdf/shims/flutter')),
+        isNull,
+      );
+    });
   });
 }

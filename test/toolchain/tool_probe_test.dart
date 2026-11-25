@@ -237,6 +237,8 @@ void main() {
 
     Future<void> fakeFlutter(String root, String version) async {
       await touch(p.join(root, 'bin', paths.host.flutterLauncherName));
+      await Directory(p.join(root, 'packages', 'flutter_tools'))
+          .create(recursive: true);
       await touch(p.join(
           root, 'bin', 'cache', 'dart-sdk', 'bin', paths.host.dartExecutableName));
       await touch(
@@ -249,14 +251,23 @@ void main() {
       InstallRecord record = InstallRecord.empty,
       bool clt = true,
       String serverpodVersion = '4.1.0',
+      String path = '/nonexistent',
+      String? loginPath,
+      ProcessResult Function(String executable, Map<String, String>? env)?
+          flutter,
     }) =>
         ToolProbe(
           paths: paths,
           manifest: manifest,
           record: record,
-          environment: {'PATH': '/nonexistent'},
-          loginShellPath: () async => null,
+          environment: {'PATH': path},
+          loginShellPath: () async => loginPath,
           runner: (executable, args, {environment}) async {
+            if (flutter != null &&
+                p.basenameWithoutExtension(executable) == 'flutter') {
+              expect(args, ['--version', '--machine']);
+              return flutter(executable, environment);
+            }
             if (executable == '/usr/bin/xcode-select') {
               return ProcessResult(0, clt ? 0 : 2, clt ? '$developerDir\n' : '',
                   '');
@@ -335,6 +346,163 @@ void main() {
       expect(inventory[ToolId.serverpodCli]!.action, ToolAction.update);
     });
 
+    /// An executable at [path] — what `whichOnPath` will find.
+    Future<String> executable(String path) async {
+      await touch(path, '#!/bin/sh\n');
+      if (!Platform.isWindows) await Process.run('/bin/chmod', ['755', path]);
+      return path;
+    }
+
+    String launcherName(String command) =>
+        paths.host.isWindows ? '$command.bat' : command;
+
+    test('a flutter on PATH inside its SDK is read from disk, not run',
+        () async {
+      final root = p.join(tmp.path, 'sdks', 'flutter');
+      await fakeFlutter(root, '3.47.5');
+      if (!Platform.isWindows) {
+        await Process.run('/bin/chmod', [
+          '755',
+          p.join(root, 'bin', paths.host.flutterLauncherName),
+        ]);
+      }
+
+      // The runner throws on any flutter it is asked to run.
+      final inventory =
+          await probe(path: p.join(root, 'bin')).inventory();
+
+      final resolved = inventory[ToolId.flutter]!.resolved!;
+      // Through its symlinks, as `/var` is to `/private/var` on macOS.
+      expect(resolved.root, Directory(root).resolveSymbolicLinksSync());
+      expect(resolved.launcher, isNull);
+      expect(inventory.flutterOnPath, isTrue);
+    });
+
+    test('a shim on PATH is asked which SDK it runs', () async {
+      final sdk = p.join(tmp.path, 'fvm', 'versions', '3.47.5');
+      await fakeFlutter(sdk, '3.47.5');
+      final shimDir = p.join(tmp.path, '.fvm_shim');
+      final shim = await executable(p.join(shimDir, launcherName('flutter')));
+      final fvmDir = p.join(tmp.path, 'homebrew', 'bin');
+      await executable(p.join(fvmDir, launcherName('fvm')));
+      final sep = paths.host.pathListSeparator;
+      final searchPath = '$shimDir$sep$fvmDir';
+
+      String? probedPath;
+      final inventory = await probe(
+        path: searchPath,
+        flutter: (exe, env) {
+          probedPath = env?['PATH'];
+          // FVM prints notices around the JSON.
+          return ProcessResult(0, 0, [
+            'FVM: running Flutter 3.47.5',
+            '{',
+            '  "frameworkVersion": "3.47.5",',
+            '  "flutterRoot": ${jsonEncode(sdk)}',
+            '}',
+            'Done.',
+          ].join('\n'), '');
+        },
+      ).inventory();
+
+      final resolved = inventory[ToolId.flutter]!.resolved!;
+      expect(resolved.root, sdk);
+      expect(resolved.executable, shim);
+      expect(resolved.launcher, shim);
+      expect(resolved.launcherPath, searchPath);
+      expect(resolved.facts['flutterRoot'], sdk);
+      expect(inventory.flutterOnPath, isTrue);
+      expect(inventory.flutterWrappers, [FlutterWrapper.fvm]);
+      expect(inventory.flutterShimMissing, isFalse);
+      // Run without its own folder, so `fvm flutter` with no version set
+      // cannot find the shim again and recurse.
+      expect(probedPath, fvmDir);
+    });
+
+    test('Puro\'s shim keeps its folder, where puro itself is', () async {
+      final sdk = p.join(tmp.path, '.puro', 'envs', 'stable', 'flutter');
+      await fakeFlutter(sdk, '3.47.5');
+      final bin = p.join(tmp.path, '.puro', 'bin');
+      await executable(p.join(bin, launcherName('flutter')));
+      await executable(p.join(bin, launcherName('puro')));
+
+      String? probedPath;
+      final inventory = await probe(
+        path: bin,
+        flutter: (exe, env) {
+          probedPath = env?['PATH'];
+          return ProcessResult(
+              0, 0, jsonEncode({'flutterRoot': sdk}), '');
+        },
+      ).inventory();
+
+      // ~/.puro holds a bin/flutter, and is still not taken for a broken SDK.
+      expect(inventory[ToolId.flutter]!.resolved!.root, sdk);
+      expect(probedPath, bin);
+      expect(inventory.flutterWrappers, [FlutterWrapper.puro]);
+    });
+
+    test('a shim that reaches no SDK leaves the shim missing', () async {
+      final shimDir = p.join(tmp.path, '.fvm_shim');
+      await executable(p.join(shimDir, launcherName('flutter')));
+      await Directory(p.join(tmp.path, 'fvm')).create();
+
+      final inventory = await probe(
+        path: shimDir,
+        flutter: (exe, env) =>
+            ProcessResult(0, 1, '', 'No Flutter SDK found.'),
+      ).inventory();
+
+      expect(inventory[ToolId.flutter]!.isSatisfied, isFalse);
+      expect(inventory.flutterOnPath, isFalse);
+      expect(inventory.flutterShimMissing, isTrue);
+    });
+
+    test('a shim found only by the login shell is run on its PATH', () async {
+      // A Finder launch: the inherited PATH has none of the user's tools.
+      final sdk = p.join(tmp.path, '.puro', 'envs', 'stable', 'flutter');
+      await fakeFlutter(sdk, '3.47.5');
+      final bin = p.join(tmp.path, '.puro', 'bin');
+      await executable(p.join(bin, launcherName('flutter')));
+      await executable(p.join(bin, launcherName('puro')));
+
+      final inventory = await probe(
+        loginPath: bin,
+        flutter: (exe, env) =>
+            ProcessResult(0, 0, jsonEncode({'flutterRoot': sdk}), ''),
+      ).inventory();
+
+      expect(inventory[ToolId.flutter]!.resolved!.launcherPath, bin);
+    });
+
+    test('FVM\'s folder alone counts as FVM', () async {
+      await Directory(p.join(tmp.path, 'fvm', 'versions')).create(
+        recursive: true,
+      );
+
+      final inventory = await probe().inventory();
+
+      expect(inventory.flutterWrappers, [FlutterWrapper.fvm]);
+      expect(inventory.flutterShimMissing, isTrue);
+    });
+
+    test('a clean Mac has no version manager, so needs no shim', () async {
+      final inventory = await probe(clt: false).inventory();
+      expect(inventory.flutterWrappers, isEmpty);
+      expect(inventory.flutterShimMissing, isFalse);
+    });
+
+    test('the install script\'s Flutter is found', () async {
+      await touch(p.join(developerDir, 'usr', 'bin', 'git'));
+      await fakeFlutter(paths.installScriptFlutterDir, '3.47.5');
+
+      final inventory = await probe().inventory();
+
+      expect(inventory[ToolId.flutter]!.resolved!.root,
+          paths.installScriptFlutterDir);
+      expect(inventory[ToolId.flutter]!.resolved!.source, ToolSource.host);
+    });
+
     test('an earlier build\'s private toolchain is found', () async {
       await touch(p.join(paths.legacyToolchainRoot, 'flutter', 'marker'));
       expect((await probe().inventory()).legacyInstallFound, isTrue);
@@ -347,6 +515,32 @@ void main() {
       );
       expect((await probe().inventory()).legacyInstallFound, isTrue);
     }, skip: Platform.isWindows ? 'no Windows build shipped a toolchain' : false);
+  });
+
+  group('parseFlutterRoot', () {
+    test('reads the machine JSON', () {
+      expect(parseFlutterRoot('{"flutterRoot": "/a/flutter"}'), '/a/flutter');
+    });
+
+    test('skips notices around it, JSON ones included', () {
+      expect(
+        parseFlutterRoot([
+          '{"notice": "A new version of Puro is available"}',
+          'Running Flutter...',
+          '{',
+          '  "frameworkVersion": "3.47.5",',
+          '  "flutterRoot": "/b/flutter"',
+          '}',
+        ].join('\n')),
+        '/b/flutter',
+      );
+    });
+
+    test('null when nothing names a root', () {
+      expect(parseFlutterRoot(''), isNull);
+      expect(parseFlutterRoot('No Flutter SDK found.'), isNull);
+      expect(parseFlutterRoot('{"frameworkVersion": "3.47.5"}'), isNull);
+    });
   });
 
   group('whichOnPath', () {

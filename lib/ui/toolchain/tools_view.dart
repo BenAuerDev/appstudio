@@ -17,14 +17,16 @@ abstract interface class ToolsView implements Listenable {
   ToolchainInventory get inventory;
 
   /// Whether first-run setup still owns the window: the inventory needs work,
-  /// or the one-time Puro/FVM notice has not been answered yet.
+  /// or the shim notice is due.
   bool get needsSetup;
 
-  /// The one-time notice that App Studio works with a standard Flutter
-  /// install only. Due on the first launch, unless one was found.
+  /// FVM or Puro is installed but no `flutter` on `PATH` reaches it
+  /// ([ToolchainInventory.flutterShimMissing]), and the user has not chosen
+  /// to go on without one. The notice says how to add a shim.
   bool get needsFlutterNotice;
 
-  /// Records that the notice was answered with Continue.
+  /// Records that the notice was answered with Continue: App Studio installs
+  /// its own Flutter instead, and does not ask again.
   Future<void> acknowledgeFlutterNotice();
 
   /// What an install would fetch — filled in by [preflight].

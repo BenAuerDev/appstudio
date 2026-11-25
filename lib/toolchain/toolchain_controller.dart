@@ -71,15 +71,10 @@ class ToolchainController extends ChangeNotifier implements ToolsView {
       );
     }
 
-    // The Puro/FVM notice is for a first launch without a standard Flutter.
-    // With one found, the question is answered for good — a Flutter removed
-    // later does not make this a first launch.
+    // Whether the shim notice was answered with Continue. Asked once: someone
+    // who chose App Studio's own Flutter over a shim has answered it.
     final prefs = await SharedPreferences.getInstance();
-    var noticeSeen = prefs.getBool(_kFlutterNoticeSeenKey) ?? false;
-    if (!noticeSeen && toolchain.inventory.standardFlutterFound) {
-      noticeSeen = true;
-      await prefs.setBool(_kFlutterNoticeSeenKey, true);
-    }
+    final noticeSeen = prefs.getBool(_kFlutterNoticeSeenKey) ?? false;
 
     return ToolchainController(
       initial: toolchain,
@@ -130,7 +125,7 @@ class ToolchainController extends ChangeNotifier implements ToolsView {
 
   @override
   bool get needsFlutterNotice =>
-      !_flutterNoticeSeen && !inventory.standardFlutterFound;
+      !_flutterNoticeSeen && inventory.flutterShimMissing;
 
   @override
   Future<void> acknowledgeFlutterNotice() async {

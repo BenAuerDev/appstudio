@@ -77,19 +77,30 @@ class Toolchain {
   /// On Windows the copy keeps the parent's case-insensitive keys, so the
   /// `Path` the system set is the one rewritten here rather than shadowed by a
   /// second `PATH`.
+  ///
+  /// A Flutter reached through a shim is not pinned. Its folder goes first on
+  /// `PATH`, followed by the `PATH` it answered on (where its wrapper is), and
+  /// `FLUTTER_ROOT` and `DART_SDK` stay unset: whatever runs `flutter` then
+  /// asks the shim from the project's folder, and the version manager picks
+  /// the SDK that project is pinned to — what the user's terminal would run.
+  /// Pinning the SDK the shim reported at probe time would override that.
   Map<String, String> processEnvironment({Map<String, String>? parent}) {
     final env = host.copyEnvironment(parent ?? Platform.environment);
+    final launcherPath = resolvedTool(ToolId.flutter)?.launcherPath;
 
-    final pathParts = <String>[
+    final pathParts = <String>[];
+    for (final entry in [
       ...binPathPrefix,
-      if (env['PATH'] case final existing?)
-        ...existing.split(host.pathListSeparator),
-    ];
-    env['PATH'] = pathParts
-        .where((e) => e.isNotEmpty)
-        .join(host.pathListSeparator);
+      ...?launcherPath?.split(host.pathListSeparator),
+      ...?env['PATH']?.split(host.pathListSeparator),
+    ]) {
+      if (entry.isEmpty) continue;
+      if (pathParts.any((e) => host.pathEquals(e, entry))) continue;
+      pathParts.add(entry);
+    }
+    env['PATH'] = pathParts.join(host.pathListSeparator);
 
-    final root = flutterRoot;
+    final root = launcherPath == null ? flutterRoot : null;
     if (root != null) {
       env['FLUTTER_ROOT'] = root;
       // serverpod_cli (AOT) resolves the SDK via DART_SDK or by probing `dart`

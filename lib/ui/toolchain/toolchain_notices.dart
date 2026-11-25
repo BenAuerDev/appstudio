@@ -1,12 +1,10 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:shad/shad.dart';
 
 import '../../toolchain/tool_status.dart';
-import '../../util/open_url.dart';
 import '../../util/pretty_path.dart';
 import '../../util/quit_app.dart';
 import '../../widgets/command_block.dart';
@@ -15,86 +13,208 @@ import 'tools_view.dart';
 import '../../widgets/app_dialog.dart';
 import '../../widgets/dialog_body.dart';
 
-/// Serverpod's quick start — the route for a Flutter App Studio cannot use.
-final kQuickStartUrl = Uri.parse('https://docs.serverpod.dev/quickstart');
-
-/// Asks, once, on a first launch without a standard Flutter: App Studio does
-/// not work with a Flutter managed by Puro or FVM yet.
+/// Raised when FVM or Puro is installed but no `flutter` on `PATH` reaches it
+/// ([ToolsView.needsFlutterNotice]). Says how to add a shim, the way the
+/// Serverpod CLI does, and waits.
 ///
-/// Completes on Continue; Quit exits the process.
-Future<void> showFlutterInstallNotice(BuildContext context) async {
-  await showAppDialog<void>(
+/// Completes with true on Continue — App Studio installs its own Flutter
+/// instead — and false once Check again finds a `flutter`. Quit exits.
+Future<bool> showFlutterShimNotice(
+  BuildContext context, {
+  required ToolsView toolchains,
+}) async {
+  final chose = await showAppDialog<bool>(
     context: context,
     barrierDismissible: false,
     barrierBlurSigma: 0,
-    builder: (context) => const FlutterInstallNotice(),
+    builder: (context) => FlutterShimNotice(toolchains: toolchains),
   );
+  return chose ?? false;
 }
 
-class FlutterInstallNotice extends StatefulWidget {
-  const FlutterInstallNotice({super.key});
+class FlutterShimNotice extends StatefulWidget {
+  const FlutterShimNotice({
+    super.key,
+    required this.toolchains,
+    this.windows,
+  });
+
+  final ToolsView toolchains;
+
+  /// Which steps to show. Defaults to the platform App Studio runs on;
+  /// Widgetbook passes it to show both.
+  final bool? windows;
 
   @override
-  State<FlutterInstallNotice> createState() => _FlutterInstallNoticeState();
+  State<FlutterShimNotice> createState() => _FlutterShimNoticeState();
 }
 
-class _FlutterInstallNoticeState extends State<FlutterInstallNotice> {
-  late final _openGuide = TapGestureRecognizer()
-    ..onTap = () => openUrl(kQuickStartUrl);
+class _FlutterShimNoticeState extends State<FlutterShimNotice> {
+  bool _checking = false;
+  bool _stillMissing = false;
 
-  @override
-  void dispose() {
-    _openGuide.dispose();
-    super.dispose();
+  bool get _windows =>
+      widget.windows ?? defaultTargetPlatform == TargetPlatform.windows;
+
+  Future<void> _checkAgain() async {
+    setState(() {
+      _checking = true;
+      _stillMissing = false;
+    });
+    await widget.toolchains.refreshDeep();
+    if (!mounted) return;
+    if (!widget.toolchains.needsFlutterNotice) {
+      Navigator.of(context).pop(false);
+      return;
+    }
+    setState(() {
+      _checking = false;
+      _stillMissing = true;
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = ShadTheme.of(context);
-    final link = TextStyle(
-      color: theme.colorScheme.primary,
-      decoration: TextDecoration.underline,
-      decorationColor: theme.colorScheme.primary,
-    );
+    final found = widget.toolchains.inventory.flutterWrappers;
+    final wrappers = found.isEmpty ? FlutterWrapper.values : found;
+    final names = wrappers.map((w) => w.displayName).join(' and ');
+    final one = wrappers.length == 1;
+    final terminal = _windows ? 'PowerShell' : 'Terminal';
 
     return PopScope(
       canPop: false,
       child: ShadDialog.alert(
-        title: const Text('Before you start'),
-        description: Text.rich(
-          TextSpan(
-            children: [
-              const TextSpan(
-                text: 'App Studio currently only works with a standard '
-                    'Flutter installation. If you are using Puro or FVM, you '
-                    'are better off following Serverpod\'s ',
-              ),
-              TextSpan(
-                text: 'Quick Start guide',
-                style: link,
-                recognizer: _openGuide,
-                mouseCursor: SystemMouseCursors.click,
-              ),
-              const TextSpan(
-                text: '. If you are not using Puro or FVM, you are good to go.',
-              ),
-            ],
-          ),
+        title: const Text('Add a flutter shim'),
+        description: Text(
+          'App Studio found $names, but no flutter command on your PATH. '
+          'App Studio, the Serverpod CLI and your editors all run flutter, so '
+          '$names ${one ? 'needs' : 'need'} a flutter that hands off to '
+          '${one ? 'it' : 'them'}.',
         ),
         actions: [
           ShadButton.outline(
             onPressed: quitApp,
             child: const Text('Quit'),
           ),
-          ShadButton(
-            onPressed: () => Navigator.of(context).pop(),
+          ShadButton.outline(
+            enabled: !_checking,
+            onPressed: _checking ? null : () => Navigator.of(context).pop(true),
             child: const Text('Continue'),
           ),
+          ShadButton(
+            enabled: !_checking,
+            onPressed: _checking ? null : () => unawaited(_checkAgain()),
+            leading: _checking
+                ? const SizedBox.square(
+                    dimension: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : null,
+            child: const Text('Check again'),
+          ),
         ],
-        child: const DialogBody(),
+        child: DialogBody(
+          child: SizedBox(
+            width: double.infinity,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (_stillMissing) ...[
+                  ErrorBanner(
+                    message: 'Still no flutter on your PATH. Open a new '
+                        '$terminal window and check that '
+                        '${_windows ? 'where.exe' : 'which'} flutter finds the '
+                        'shim.',
+                  ),
+                  const ShadGap(3),
+                ],
+                for (final wrapper in wrappers)
+                  for (final step in shimSteps(wrapper, windows: _windows)) ...[
+                    Text(step.text, style: theme.textTheme.muted),
+                    const ShadGap(2),
+                    if (step.command case final command?) ...[
+                      CommandBlock(command: command),
+                      const ShadGap(3),
+                    ],
+                  ],
+                Text(
+                  'Then check again. Or continue without a shim, and App '
+                  'Studio installs its own copy of Flutter.',
+                  style: theme.textTheme.muted,
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
+}
+
+/// One step of putting a shim in place: what to do, and the command for it
+/// when there is one to run.
+typedef ShimStep = ({String text, String? command});
+
+/// How to give [wrapper] a `flutter` on `PATH`, on Windows or macOS.
+///
+/// FVM's steps are the Serverpod CLI's own (`_fvmShimInstructions` in its
+/// `serverpod_command_runner.dart`), so a user who already followed the CLI's
+/// has nothing new to do, and one who follows these has satisfied both. Puro
+/// installs its shim along with itself, so its step only puts it on `PATH`.
+List<ShimStep> shimSteps(FlutterWrapper wrapper, {required bool windows}) {
+  return switch (wrapper) {
+    FlutterWrapper.fvm when windows => const [
+        (
+          text: 'FVM: create a flutter.bat that runs fvm flutter.',
+          command: r'New-Item -ItemType Directory -Force "$env:USERPROFILE\.fvm_shim" | Out-Null'
+              '\n'
+              r'Set-Content "$env:USERPROFILE\.fvm_shim\flutter.bat" "@fvm flutter %*"',
+        ),
+        (
+          text: r'Add %USERPROFILE%\.fvm_shim to the top of your user Path in '
+              'Environment Variables. Then give FVM a global version, or the '
+              'shim calls itself outside projects pinned with FVM:',
+          command: 'fvm install stable\nfvm global stable',
+        ),
+      ],
+    FlutterWrapper.fvm => const [
+        (
+          text: 'FVM: create a flutter that runs fvm flutter.',
+          command: 'mkdir -p ~/.fvm_shim\n'
+              r"""printf '#!/bin/sh\nexec fvm flutter "$@"\n' > ~/.fvm_shim/flutter"""
+              '\n'
+              'chmod +x ~/.fvm_shim/flutter',
+        ),
+        (
+          text: "Put it first on your PATH, in ~/.zshrc or your shell's "
+              'startup file:',
+          command: r'export PATH="$HOME/.fvm_shim:$PATH"',
+        ),
+        (
+          text: 'Then give FVM a global version, or the shim calls itself '
+              'outside projects pinned with FVM:',
+          command: 'fvm install stable\nfvm global stable',
+        ),
+      ],
+    FlutterWrapper.puro when windows => const [
+        (
+          text: r'Puro: add %USERPROFILE%\.puro\bin to the top of your user '
+              'Path in Environment Variables. Its flutter is there, and runs '
+              'the environment you choose with puro use --global <env>.',
+          command: null,
+        ),
+      ],
+    FlutterWrapper.puro => const [
+        (
+          text: "Puro: put its bin folder first on your PATH, in ~/.zshrc or "
+              "your shell's startup file. Its flutter is there, and runs the "
+              'environment you choose with puro use --global <env>.',
+          command: r'export PATH="$HOME/.puro/bin:$PATH"',
+        ),
+      ],
+  };
 }
 
 /// Tells a user upgrading from a build that kept its own tools that this one
@@ -137,10 +257,27 @@ class LegacyInstallNotice extends StatelessWidget {
   }
 }
 
-/// The command that brings [candidate] into range. Uses the SDK's full path:
-/// the user's `flutter` may well be a different copy from the one found.
-String manualUpdateCommand(ToolCandidate candidate) {
+/// The command that brings [candidate] into range, or null when there is no
+/// one command to give. Uses the SDK's full path: the user's `flutter` may
+/// well be a different copy from the one found.
+///
+/// An SDK a version manager keeps is updated through it — `flutter upgrade`
+/// inside one is what FVM and Puro tell you not to do. Behind any other shim
+/// (asdf, mise) there is no command App Studio can know.
+String? manualUpdateCommand(ToolCandidate candidate) {
   final root = candidate.root ?? '';
+  switch (flutterWrapperFor(root)) {
+    case FlutterWrapper.fvm:
+      return 'fvm install stable\nfvm global stable';
+    case FlutterWrapper.puro:
+      // ~/.puro/envs/<env>/flutter
+      final segments = root.split(RegExp(r'[/\\]'));
+      final envs = segments.lastIndexOf('envs');
+      if (envs < 0 || envs + 1 >= segments.length) return null;
+      return 'puro upgrade ${segments[envs + 1]}';
+    case null:
+      if (candidate.launcher != null) return null;
+  }
   final pretty = prettyPath(root);
   // A Windows SDK: `flutter.bat`, and PowerShell — the terminal Windows opens —
   // needs `&` to run a quoted path. The full path either way: `~` is not
@@ -176,8 +313,11 @@ String manualUpdateMessage(ToolStatus status) {
     final what = channel != null && channel != 'stable'
         ? 'is on the $channel channel'
         : 'is $found';
+    final how = manualUpdateCommand(candidate) == null
+        ? ' Update it with the tool that manages it.'
+        : '';
     return '$name$where $what, and App Studio needs '
-        '${status.spec.accepts} on the stable channel.';
+        '${status.spec.accepts} on the stable channel.$how';
   }
   return '$name$where cannot be used: ${candidate?.reason ?? 'unknown'}.';
 }
@@ -285,7 +425,8 @@ class _ManualUpdateDialogState extends State<ManualUpdateDialog> {
                   const ShadGap(2),
                   if (status.bestRejected case final candidate?
                       when candidate.fitness == ToolFitness.wrongVersion)
-                    CommandBlock(command: manualUpdateCommand(candidate)),
+                    if (manualUpdateCommand(candidate) case final command?)
+                      CommandBlock(command: command),
                 ],
               ],
             ),
