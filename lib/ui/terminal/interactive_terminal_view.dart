@@ -1,9 +1,9 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shad/shad.dart';
 import 'package:xterm/xterm.dart';
 
-import '../../platform/host.dart';
 import '../../theme/app_theme.dart';
 
 /// Font size for terminal output.
@@ -145,9 +145,15 @@ class InteractiveTerminalView extends StatelessWidget {
     LogicalKeyboardKey.keyA,
   };
 
+  /// Keyboard behaviour follows [defaultTargetPlatform], as `shortcutHint`
+  /// does — the host in the app, and whatever a test sets in a test, so the
+  /// Windows mapping can be tested on a Mac and the other way round.
+  static bool get _ctrlIsTerminal =>
+      defaultTargetPlatform == TargetPlatform.windows;
+
   /// Lets ⌘ chords past xterm to the menu bar. See the class comment.
   static KeyEventResult _routeKey(FocusNode node, KeyEvent event) {
-    if (currentHost.isWindows) return KeyEventResult.ignored;
+    if (_ctrlIsTerminal) return KeyEventResult.ignored;
     if (!HardwareKeyboard.instance.isMetaPressed) return KeyEventResult.ignored;
     if (_macTerminalChords.contains(event.logicalKey)) {
       return KeyEventResult.ignored;
@@ -169,7 +175,7 @@ class InteractiveTerminalView extends StatelessWidget {
       autofocus: autofocus,
       focusNode: focusNode,
       readOnly: readOnly,
-      shortcuts: currentHost.isWindows ? _windowsShortcuts : _macShortcuts,
+      shortcuts: _ctrlIsTerminal ? _windowsShortcuts : _macShortcuts,
       onKeyEvent: _routeKey,
     );
   }

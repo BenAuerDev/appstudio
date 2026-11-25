@@ -186,5 +186,20 @@ void main() {
       });
       expect(sent, isEmpty);
     }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
+
+    testWidgets('Ctrl+Shift+C copies on Windows instead of reaching the CLI', (
+      tester,
+    ) async {
+      final sent = await typing(tester, () async {
+        await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+        await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+        await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
+        await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+        await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
+        await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      });
+      // Only the plain Ctrl-C reached the CLI.
+      expect(sent, ['\x03']);
+    }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
   });
 }
