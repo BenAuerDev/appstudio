@@ -12,11 +12,11 @@ import 'full_restart_button.dart';
 import 'hot_restart_button.dart';
 import 'open_in_editor_buttons.dart';
 import 'publish_to_cloud_button.dart';
-import 'server_status_indicator.dart';
+import 'server_status_bar.dart';
 import 'toolchain/tools_view.dart';
 
-/// The bar across the top of an open project: the server's status, then
-/// everything that acts on the project.
+/// The bar across the top of an open project: a way back to the start page,
+/// the server's status, then everything that acts on the project.
 ///
 /// The panel toggle that used to lead it is the Logs menu's Show/Hide Logs
 /// now, and the project's name and path gave way to the status — what a user
@@ -34,6 +34,8 @@ class StudioToolbar extends StatelessWidget {
     required this.editors,
     required this.publisher,
     required this.onManageTools,
+    required this.onBack,
+    required this.onViewLogs,
   });
 
   final ServerStatusView status;
@@ -44,6 +46,13 @@ class StudioToolbar extends StatelessWidget {
   final CloudPublisher publisher;
   final VoidCallback onManageTools;
 
+  /// Closes the project, which brings the start page back.
+  final VoidCallback onBack;
+
+  /// Opens the server log — offered beside the status while the server is
+  /// stopped.
+  final VoidCallback onViewLogs;
+
   /// The width the status line keeps however narrow the window gets — enough
   /// for "Launching Demo app" beside its mark. Everything else gives way first.
   static const minStatusWidth = 180.0;
@@ -53,6 +62,9 @@ class StudioToolbar extends StatelessWidget {
   /// The two restart buttons and the gaps before them, which never fold.
   static const _restartWidth = 8 + kToolbarIconButtonSize + 8 +
       kToolbarIconButtonSize;
+
+  /// The back button and the gap after it.
+  static const _backWidth = kToolbarIconButtonSize + 8;
 
   @override
   Widget build(BuildContext context) {
@@ -71,7 +83,7 @@ class StudioToolbar extends StatelessWidget {
           // minimum and the restart buttons. The group then decides for itself
           // whether its full form fits in that — measured, not guessed.
           final groupWidth = (constraints.maxWidth -
-                  4 -
+                  _backWidth -
                   minStatusWidth -
                   12 -
                   _restartWidth)
@@ -79,11 +91,16 @@ class StudioToolbar extends StatelessWidget {
 
           return Row(
             children: [
-              const SizedBox(width: 4),
+              _BackButton(onPressed: onBack),
+              const SizedBox(width: 8),
               Expanded(
                 child: Align(
                   alignment: Alignment.centerLeft,
-                  child: ServerStatusIndicator(status: status),
+                  child: ServerStatusBar(
+                    status: status,
+                    process: process,
+                    onViewLogs: onViewLogs,
+                  ),
                 ),
               ),
               const SizedBox(width: 12),
@@ -118,6 +135,32 @@ class StudioToolbar extends StatelessWidget {
           PublishToCloudButton(publisher: publisher, compact: compact),
         ],
       );
+}
+
+/// Back to the start page: closes the project, stopping its server, as File →
+/// Close does.
+///
+/// Ghost rather than outline like the restart buttons — it is navigation, not
+/// an action on the server, and sits apart from them at the other end of the
+/// bar.
+class _BackButton extends StatelessWidget {
+  const _BackButton({required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return ShadTooltip(
+      builder: (context) => const Text('Close project'),
+      child: ShadIconButton.ghost(
+        semanticLabel: 'Close project',
+        onPressed: onPressed,
+        width: kToolbarIconButtonSize,
+        height: kToolbarIconButtonSize,
+        icon: const Icon(LucideIcons.chevronLeft, size: 18),
+      ),
+    );
+  }
 }
 
 /// Destructive toolbar badge for a required tool that could not be resolved,

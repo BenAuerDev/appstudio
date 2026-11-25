@@ -101,6 +101,21 @@ class _StudioShellState extends State<StudioShell> {
     }
   }
 
+  bool _closing = false;
+
+  /// The toolbar's back button: what File → Close does, and guarded the same
+  /// way against a second press while the server is still going down.
+  Future<void> _closeProject() async {
+    if (_closing || !widget.session.hasProject) return;
+    _closing = true;
+    try {
+      if (widget.process.canStop) await widget.process.stop();
+      widget.session.closeProject();
+    } finally {
+      _closing = false;
+    }
+  }
+
   void _newProject() {
     showNewProjectScreen(
       context,
@@ -151,6 +166,9 @@ class _StudioShellState extends State<StudioShell> {
                 actions: widget.process,
                 editors: widget.editors,
                 publisher: widget.cloud,
+                onBack: () => unawaited(_closeProject()),
+                onViewLogs: () =>
+                    widget.logView.show(const ServerLogSource()),
               ),
             Expanded(
               child: _Workspace(

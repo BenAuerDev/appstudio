@@ -123,6 +123,8 @@ class StudioWindowMock extends StatelessWidget {
               ),
           publisher: FakeCloudPublisher(),
           onManageTools: () {},
+          onBack: () {},
+          onViewLogs: () {},
         ),
         Expanded(
           child: Row(

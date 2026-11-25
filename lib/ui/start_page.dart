@@ -144,13 +144,16 @@ class _Hero extends StatelessWidget {
   }
 }
 
-/// One of the two headline actions, inset in its own pane of glass.
+/// One of the two headline actions, inset in its own pane of glass — the
+/// Serverpod design system's hero action: an `action`-blue button in a frosted
+/// frame.
 ///
 /// The card is what makes a button this large sit on the backdrop instead of
 /// floating over it; both are built here so the pair cannot drift apart in
 /// size the way two separately styled buttons would. They are the same colour
 /// on purpose — creating and opening are the two ways in, not a choice with a
-/// recommended answer.
+/// recommended answer — and the design system says a row of hero buttons is
+/// all one colour anyway.
 class _PrimaryAction extends StatelessWidget {
   const _PrimaryAction({
     required this.onPressed,
@@ -177,8 +180,14 @@ class _PrimaryAction extends StatelessWidget {
     return ShadCard(
       padding: const EdgeInsets.all(_cardPadding),
       radius: concentricRadius(theme.radius, _cardPadding),
+      backgroundColor: kLandingActionFrameSurface,
+      border: ShadBorder.all(
+        color: kLandingActionFrameBorder,
+        width: kDividerWidth,
+      ),
       child: ShadButton(
         onPressed: onPressed,
+        hoverBackgroundColor: kLandingActionHoverColor,
         size: ShadButtonSize.lg,
         height: _buttonHeight,
         padding: _buttonPadding,
