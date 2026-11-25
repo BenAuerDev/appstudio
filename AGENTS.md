@@ -165,8 +165,8 @@ migrations are commands on the same connection.
   matches a live runner whose manifest names the same pid. It is consumed either
   way, so a stale one cannot become a signal for whatever inherits the pid.
 - **No pid file, no group kill, no port reclaim for the runner.** It is not our
-  child, and the preview has no fixed port to reclaim. `DevProcessKind` is down
-  to the agent.
+  child, and the preview has no fixed port to reclaim. `DevProcessKind` is the
+  agent and Publish to Cloud's CLI.
 - **`pub get` still runs before a start, and only then** — never under a runner
   that is already up. The old step that deleted `.dart_tool/serverpod` to force a
   recompile is gone: that directory now holds the live runner's manifest, lock
@@ -244,7 +244,8 @@ migrations are commands on the same connection.
 restart and "is a runner attached" — is a direct call on the runner socket now.
 The runner still serves `mcp.sock` for the user's own AI agents; App Studio no
 longer touches it. `dart_mcp`, `xterm` and `kyroon_pty` left `pubspec.yaml` with
-it.
+it. `xterm` is back for Publish to Cloud's terminal, with `flutter_pty2` rather
+than `kyroon_pty` — see Publish to Cloud for why.
 
 ## Toolbar, Server menu and Logs menu
 
@@ -536,10 +537,102 @@ directory. The fix is to spawn what Cursor's own `bin/cursor` script spawns:
   `anysphere.cursor-deeplink/glass` focuses the Agents Window but cannot target a
   project, and `/command` writes a slash-command file rather than running one.
 
+## Publish to Cloud
+
+The toolbar's **Publish to Cloud** runs `serverpod cloud launch` in a dialog
+with a terminal the user types into, then swaps the terminal for a "Done"
+panel with the project's addresses — or keeps it under a red banner if the
+command failed. `lib/cloud/cloud_publish.dart` is the run,
+`lib/cloud/pty_process.dart` the PTY seam, `ui/publish_to_cloud_button.dart`
+the dialog and `ui/terminal/interactive_terminal_view.dart` the terminal.
+
+- **`launch`, always — it is the CLI's one command for both cases.** With no
+  `scloud.yaml` in the server package it walks the user through creating a
+  Serverpod Cloud project and deploys; with one, it redeploys. (Read
+  `serverpod_cloud_cli` 1.4.0 in the pub cache for this, not
+  `../serverpod_cloud`: that checkout is months behind and its `launch` still
+  creates a new project every time. The published CLI lives in
+  `serverpod_cloud_clients`.)
+- **Through `serverpod cloud`, not `scloud`.** The Serverpod CLI installs
+  `scloud` when it is missing and reruns it after a self-update (exit codes 69
+  and 75); calling `scloud` directly would mean reproducing that.
+- **The working directory is the server package and no path is passed.**
+  `launch` looks there first and keeps `scloud.yaml` there, and a path argument
+  is the one thing a Windows batch launcher could refuse (`resolveToolCommand`).
+- **It must be a PTY.** `launch` is `interactiveOnly`: it refuses to run without
+  a terminal, and its prompts read single keys in raw mode. Piping was never an
+  option — and a prompt with no default loops forever on a closed stdin.
+- **The exit code is the whole contract.** Nothing reads the output: the CLI's
+  prompts, wording and layout can change without App Studio noticing, which is
+  the point. Exit 0 is a success — `launch` waits for the rollout by default
+  (`--await`), so the project is deployed, not just uploaded. The addresses on
+  the Done panel come from the project id in `scloud.yaml` (or `.yml`, `.json`),
+  the CLI's own record, with the host scheme it prints; no id there still reads
+  as a success, without addresses.
+- **Failure keeps the terminal.** The CLI's own error is in it, so the banner
+  only says that it failed and with which exit code — or, when the CLI never
+  started (no server package, no Serverpod CLI, no PTY), why. Try again starts
+  a fresh run on a **new** `Terminal`: xterm 4 does not implement `ESC c`, so
+  the old one cannot be cleared.
+- **Cancel asks first**, then sends SIGINT to the foreground process group —
+  a signal, not a `0x03` byte, because raw mode turns Ctrl-C into a key — and
+  ends the group after 3 s if it is still there. On Windows there are no
+  signals, so it ends the Job Object at once. A run that was asked to stop is
+  "cancelled" whatever code it exits with. The barrier does not dismiss the
+  dialog while a run is active, and a pop (Escape outside the terminal, the
+  navigator) raises the same question.
+- **`stop()` ends a run with no grace**, for `teardownSession` (quit, Sparkle,
+  uninstall) and for a project switch or close, which the controller watches.
+  The pid is registered as `DevProcessKind.cloudPublish`: a PTY child leads its
+  own session, so the next launch's group kill takes `scloud` with it.
+
+### `flutter_pty2`, not `kyroon_pty`
+
+The old server log ran on `kyroon_pty`, and on Windows it would not do:
+`build_command` concatenates the executable and arguments byte by byte — no
+quoting, and each UTF-8 byte cast to a `WCHAR` — so a user folder with a space
+or a non-ASCII letter breaks the command line; and it never calls
+`ClosePseudoConsole`, so every run would leave a `conhost` behind.
+`flutter_pty2` converts and quotes, closes the pseudoconsole, and runs the
+child in a **Job Object with `KILL_ON_JOB_CLOSE`** — so a kill, or App Studio
+dying, takes `scloud` down with the `serverpod` that started it. That Job
+Object is the containment `ProcessKiller`'s Windows note says the other
+children still lack.
+
+- **It is a native asset, not a plugin**: its `hook/build.dart` compiles the C
+  with the host's compiler (Xcode's clang, MSVC). No `generated_plugin*` entry,
+  no Podfile change. `build_release.ps1` checks `flutter_pty2.dll` is in the
+  bundle, since nothing else would notice it missing.
+- **The afunix.sys rule still holds.** Ending this tree on Windows kills
+  processes, which App Studio otherwise never does there, but neither
+  `serverpod cloud` nor `scloud` opens an AF_UNIX socket — they talk HTTPS.
+  Anything that ever puts a runner-socket client in this tree reopens that.
+
+### Keys in an interactive terminal
+
+The server log was an xterm that kept *no* keys; this one has to keep the
+CLI's and still let the app's shortcuts through — a key Flutter reports
+handled never reaches the menu bar.
+
+- **macOS: ⌘ chords go to the menu bar**, except ⌘C, ⌘V and ⌘A, which act on
+  the terminal. `onKeyEvent` answers `skipRemainingHandlers` for them before
+  xterm can turn the letter into input; no terminal ever sends ⌘ to a program.
+- **Windows: Ctrl belongs to the terminal**, as in Windows Terminal. Copy is
+  Ctrl+Shift+C, paste Ctrl+V or Ctrl+Shift+V; Ctrl+A stays the CLI's.
+- **`hardwareKeyboardOnly` stays off** — on, xterm types every key it did not
+  handle and reports it handled, which is how the old log ate ⌘W.
+- Escape, Tab and Enter go to the CLI while the terminal has focus; the
+  dialog's own Escape does not get them.
+- `test/publish_to_cloud_button_test.dart` pins the key routing;
+  `test/cloud/cloud_publish_pty_test.dart` (tag `process`) drives a real PTY
+  with a shell script: a prompt answered through the terminal, the exit code,
+  and a cancel that has to take a child process down.
+
 ## Child processes and teardown
 
-App Studio has three long-lived things to take down: the Serverpod runner it
-started, `opencode serve`, and CEF's helpers. The runner is not a child at all —
+App Studio has four long-lived things to take down: the Serverpod runner it
+started, `opencode serve`, CEF's helpers, and a Publish to Cloud run in flight
+(see Publish to Cloud). The runner is not a child at all —
 the CLI detaches it — so see The Serverpod runner for how it is stopped and
 reclaimed; the rest of this section is about real children. Getting them down is
 harder than it looks, and the failure is silent — an orphan is reparented to

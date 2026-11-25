@@ -18,7 +18,13 @@ import 'process_killer.dart';
 /// record instead ([OwnedRunner]), and is stopped through its socket.
 enum DevProcessKind {
   /// `opencode serve` — the agent.
-  agent('agent');
+  agent('agent'),
+
+  /// `serverpod cloud launch`, from Publish to Cloud. A PTY child leads its
+  /// own session, so the reclaim's group kill takes the `scloud` it started
+  /// too. On Windows the Job Object `flutter_pty2` runs it in already ended
+  /// both when we died.
+  cloudPublish('cloud-publish');
 
   const DevProcessKind(this.id);
 

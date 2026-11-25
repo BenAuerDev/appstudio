@@ -4,11 +4,12 @@ import 'package:flutter/foundation.dart';
 import 'package:webview_cef/webview_cef.dart';
 
 import '../agent/agent_controller.dart';
+import '../cloud/cloud_publish.dart';
 import '../process/serverpod_process.dart';
 
 /// Stops everything a live session owns: the Serverpod runner App Studio
-/// started (one it only attached to is detached from), the CEF preview and the
-/// OpenCode agent.
+/// started (one it only attached to is detached from), the CEF preview, the
+/// OpenCode agent and a Publish to Cloud run in flight.
 ///
 /// Two callers, and they must not drift apart:
 ///
@@ -24,6 +25,7 @@ import '../process/serverpod_process.dart';
 Future<void> teardownSession({
   required ServerpodProcessController process,
   required AgentController agent,
+  required CloudPublishController cloud,
   Duration timeout = const Duration(seconds: 15),
 }) async {
   Future<void> guarded(String what, Future<void> Function() action) async {
@@ -61,6 +63,9 @@ Future<void> teardownSession({
     // teardown and return, so every quit left an orphaned `opencode serve`
     // reparented to launchd — 17 of them on the machine where this was found.
     guarded('agent stop', agent.stop),
+    // A deploy half done is ended, not left running with nobody to answer
+    // its prompts. The CLI is our child, in a PTY.
+    guarded('cloud publish stop', cloud.stop),
   ]).timeout(
     timeout,
     onTimeout: () {

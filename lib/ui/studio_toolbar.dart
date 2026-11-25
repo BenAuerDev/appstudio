@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shad/shad.dart';
 
+import '../cloud/cloud_publish.dart';
 import '../process/full_restart_view.dart';
 import '../runner/runner_actions_view.dart';
 import '../runner/server_status.dart';
@@ -31,6 +32,7 @@ class StudioToolbar extends StatelessWidget {
     required this.process,
     required this.actions,
     required this.editors,
+    required this.publisher,
     required this.onManageTools,
   });
 
@@ -39,6 +41,7 @@ class StudioToolbar extends StatelessWidget {
   final FullRestartView process;
   final RunnerActionsView actions;
   final ExternalEditorsView editors;
+  final CloudPublisher publisher;
   final VoidCallback onManageTools;
 
   /// The width the status line keeps however narrow the window gets — enough
@@ -112,7 +115,7 @@ class StudioToolbar extends StatelessWidget {
         children: [
           ToolchainWarningBadge(tools: tools, onTap: onManageTools),
           OpenInEditorButtons(editors: editors, compact: compact),
-          PublishToCloudButton(compact: compact),
+          PublishToCloudButton(publisher: publisher, compact: compact),
         ],
       );
 }

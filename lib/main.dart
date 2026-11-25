@@ -6,6 +6,7 @@ import 'package:shad/shad.dart';
 
 import 'agent/agent_controller.dart';
 import 'analytics/app_analytics.dart';
+import 'cloud/cloud_publish.dart';
 import 'platform/afunix_settle.dart';
 import 'platform/compact_window.dart';
 import 'platform/host.dart';
@@ -65,6 +66,7 @@ Future<void> main() async {
     process: process,
   );
   final editors = ExternalEditorsController(session: session, process: process);
+  final cloud = CloudPublishController(toolchains: toolchains, session: session);
   final previewMode = PreviewModeController(window: CompactWindowChannel());
   final logView = LogViewController();
 
@@ -73,6 +75,7 @@ Future<void> main() async {
   final updates = await UpdateController.create(
     process: process,
     agent: agent,
+    cloud: cloud,
   );
 
   // Installed before the first event so nothing fires into the no-op default.
@@ -101,6 +104,7 @@ Future<void> main() async {
         process: process,
       agent: agent,
       editors: editors,
+      cloud: cloud,
       updates: updates,
       previewMode: previewMode,
       logView: logView,
@@ -117,6 +121,7 @@ class AppStudioApp extends StatefulWidget {
     required this.process,
     required this.agent,
     required this.editors,
+    required this.cloud,
     required this.updates,
     required this.previewMode,
     required this.logView,
@@ -128,6 +133,7 @@ class AppStudioApp extends StatefulWidget {
   final ServerpodProcessController process;
   final AgentController agent;
   final ExternalEditorsController editors;
+  final CloudPublishController cloud;
   final UpdateController updates;
   final PreviewModeController previewMode;
   final LogViewController logView;
@@ -229,6 +235,7 @@ class _AppStudioAppState extends State<AppStudioApp> {
       await teardownSession(
         process: widget.process,
         agent: widget.agent,
+        cloud: widget.cloud,
         timeout: const Duration(seconds: 6),
       );
     } catch (e) {
@@ -430,6 +437,7 @@ class _AppStudioAppState extends State<AppStudioApp> {
       toolchains: widget.toolchains,
       process: widget.process,
       agent: widget.agent,
+      cloud: widget.cloud,
     );
     final removable = await widget.toolchains.removableTools();
     if (!mounted || !navigatorContext.mounted) return;
@@ -479,7 +487,8 @@ class _AppStudioAppState extends State<AppStudioApp> {
         teardownSession(
           process: widget.process,
           agent: widget.agent,
-          ),
+          cloud: widget.cloud,
+        ),
       );
     }
     widget.updates.dispose();
@@ -487,6 +496,7 @@ class _AppStudioAppState extends State<AppStudioApp> {
     // do both, which is why the stop could not be awaited.
     widget.agent.dispose();
     widget.process.dispose();
+    widget.cloud.dispose();
     widget.session.dispose();
     widget.themeController.dispose();
     widget.previewMode.dispose();
@@ -540,7 +550,8 @@ class _AppStudioAppState extends State<AppStudioApp> {
               session: widget.session,
               process: widget.process,
               agent: widget.agent,
-                    editors: widget.editors,
+              editors: widget.editors,
+              cloud: widget.cloud,
               themeController: widget.themeController,
               previewMode: widget.previewMode,
               logView: widget.logView,

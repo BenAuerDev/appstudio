@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:appstudio/agent/agent_controller.dart';
+import 'package:appstudio/cloud/cloud_publish.dart';
 import 'package:appstudio/platform/host.dart';
 import 'package:appstudio/process/serverpod_process.dart';
 import 'package:appstudio/session/project_session.dart';
@@ -273,6 +274,10 @@ void main() {
           toolchains: toolchains,
           session: session,
           process: process,
+        ),
+        cloud: CloudPublishController(
+          toolchains: toolchains,
+          session: session,
         ),
       ).run(const UninstallChoice(
         tools: {ToolId.git, ToolId.developerMode},

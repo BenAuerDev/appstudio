@@ -17,10 +17,14 @@ void main() {
     }
   });
 
-  test('the agent is registered, and the runner is not', () {
+  test('the agent and the cloud publish CLI are registered, the runner is not',
+      () {
     // The Serverpod runner is detached by design and is stopped through its
     // socket from an ownership record, not by a pid file and a group kill.
-    expect(DevProcessKind.values.map((k) => k.id), ['agent']);
+    expect(
+      DevProcessKind.values.map((k) => k.id),
+      ['agent', 'cloud-publish'],
+    );
     expect(DevProcessKind.agent.pidFile, endsWith('appstudio-agent.pid'));
   });
 

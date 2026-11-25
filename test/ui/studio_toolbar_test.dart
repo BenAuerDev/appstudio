@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shad/shad.dart';
 
+import '../../widgetbook/fakes/cloud.dart';
 import '../../widgetbook/fakes/project.dart';
 import '../../widgetbook/fakes/runner.dart';
 import '../../widgetbook/fakes/tools.dart';
@@ -27,6 +28,7 @@ void main() {
             editors: FakeExternalEditors(
               editors: const [cursorEditor, claudeEditor],
             ),
+            publisher: FakeCloudPublisher(),
             onManageTools: () {},
           ),
         ),
