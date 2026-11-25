@@ -88,11 +88,29 @@ final firstRunFolder = WidgetbookFolder(
       ],
     ),
     WidgetbookComponent(
-      name: 'Puro or FVM notice',
+      name: 'Flutter shim notice',
       useCases: [
         WidgetbookUseCase(
-          name: 'Default',
-          builder: (_) => _onLanding(const FlutterInstallNotice()),
+          name: 'FVM on macOS',
+          builder: (_) => _onLanding(FlutterShimNotice(
+            toolchains: FakeToolsView(inventory: fvmWithoutShimInventory),
+            windows: false,
+          )),
+        ),
+        WidgetbookUseCase(
+          name: 'FVM on Windows',
+          builder: (_) => _onLanding(FlutterShimNotice(
+            toolchains: FakeToolsView(inventory: fvmWithoutShimInventory),
+            windows: true,
+          )),
+        ),
+        WidgetbookUseCase(
+          name: 'FVM and Puro on macOS',
+          builder: (_) => _onLanding(FlutterShimNotice(
+            toolchains:
+                FakeToolsView(inventory: fvmAndPuroWithoutShimInventory),
+            windows: false,
+          )),
         ),
       ],
     ),

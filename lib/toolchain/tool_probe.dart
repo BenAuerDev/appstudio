@@ -60,6 +60,32 @@ class FlutterInfo {
   }
 }
 
+/// The `flutterRoot` in what `flutter --version --machine` printed, or null.
+///
+/// Version managers print notices around the JSON (fvm, Puro), and a notice
+/// can be JSON itself, so every run of whole lines that could be one object is
+/// tried and the first that names a `flutterRoot` wins — the rule the
+/// Serverpod CLI's `SdkResolver` uses, so both read a shim the same way.
+String? parseFlutterRoot(String output) {
+  final lines = const LineSplitter().convert(output);
+  for (var start = 0; start < lines.length; start++) {
+    if (!lines[start].trimLeft().startsWith('{')) continue;
+    for (var end = start; end < lines.length; end++) {
+      if (!lines[end].trimRight().endsWith('}')) continue;
+      final Object? decoded;
+      try {
+        decoded = jsonDecode(lines.sublist(start, end + 1).join('\n'));
+      } on FormatException {
+        continue;
+      }
+      if (decoded is Map && decoded['flutterRoot'] is String) {
+        return decoded['flutterRoot'] as String;
+      }
+    }
+  }
+  return null;
+}
+
 /// `Serverpod version: 4.0.0-beta.1`.
 ToolVersion? parseServerpodVersion(String output) {
   final text = output.trim();
@@ -275,7 +301,8 @@ class ToolProbe {
 
     // Flutter first: the Serverpod probe needs `dart` on PATH to run a
     // `pub global activate`d launcher.
-    final flutter = await _probeFlutter(deep: deep);
+    final flutterOnPath = await _flutterOnPath(manifest[ToolId.flutter]!);
+    final flutter = await _probeFlutter(deep: deep, onPath: flutterOnPath);
     tools[ToolId.flutter] = flutter;
     final dartExecutable = flutter.resolved?.facts['dartExecutable'];
 
@@ -295,6 +322,8 @@ class ToolProbe {
       tools: tools,
       legacyInstallFound: await _legacyInstallFound(),
       longPathsDisabled: _host.isWindows && !longPathsEnabled(_windows),
+      flutterWrappers: await _flutterWrappers(),
+      flutterOnPath: flutterOnPath != null,
     );
   }
 
@@ -432,20 +461,177 @@ class ToolProbe {
 
   // -- Flutter --------------------------------------------------------------
 
-  Future<ToolStatus> _probeFlutter({required bool deep}) async {
+  /// Every Flutter SDK, in precedence order: `FLUTTER_ROOT`, then what
+  /// `flutter` on `PATH` leads to ([onPath]), then the conventional places.
+  Future<ToolStatus> _probeFlutter({
+    required bool deep,
+    required ToolCandidate? onPath,
+  }) async {
     final spec = manifest[ToolId.flutter]!;
     final candidates = <ToolCandidate>[];
-    for (final root in await _flutterRoots()) {
-      final candidate = await _flutterAt(root, spec);
-      if (candidate.fitness == ToolFitness.notFound && !deep) continue;
+    final seen = <String>[];
+
+    bool isNew(String root) {
+      if (seen.any((r) => _host.pathEquals(r, root))) return false;
+      seen.add(root);
+      return true;
+    }
+
+    /// Adds [candidate]; true once the search can stop.
+    bool take(ToolCandidate candidate) {
+      if (candidate.fitness == ToolFitness.notFound && !deep) return false;
       candidates.add(candidate);
-      if (candidate.isSatisfied && !deep) break;
+      return candidate.isSatisfied && !deep;
+    }
+
+    Future<bool> tryRoot(String? root) async {
+      if (root == null || root.isEmpty) return false;
+      final normalized = _path.normalize(root);
+      if (!isNew(normalized)) return false;
+      return take(await _flutterAt(normalized, spec));
+    }
+
+    var done = await tryRoot(_env['FLUTTER_ROOT']);
+    if (!done && onPath != null && isNew(onPath.root!)) done = take(onPath);
+    if (!done) {
+      for (final root in _flutterRoots()) {
+        if (await tryRoot(root)) break;
+      }
     }
     return ToolStatus(
       spec: spec,
       candidates: candidates,
       action: flutterAction(candidates, record),
     );
+  }
+
+  /// What `flutter` on `PATH` leads to, or null when there is none or it
+  /// leads nowhere.
+  ///
+  /// Usually it is inside its SDK, and the SDK is read from disk like any
+  /// other. When it is not — FVM's shim (`~/.fvm_shim/flutter`), Puro's
+  /// (`~/.puro/bin/flutter`), asdf's or mise's — it is a launcher, and the
+  /// only way to learn which SDK it runs is to ask it, as the Serverpod CLI
+  /// does.
+  Future<ToolCandidate?> _flutterOnPath(ToolSpec spec) async {
+    final found = await _locate('flutter');
+    if (found == null) return null;
+    // <root>/bin/flutter → <root>
+    final root = _path.normalize(
+      _path.dirname(_path.dirname(await _resolveSymlink(found.path))),
+    );
+    if (await _isFlutterSdk(root)) return _flutterAt(root, spec);
+    return _flutterThroughLauncher(found.path, found.searchPath, spec);
+  }
+
+  /// A Flutter SDK, as opposed to a folder that merely holds a `bin/flutter`:
+  /// Puro's shim is `~/.puro/bin/flutter`, which would otherwise make `~/.puro`
+  /// look like a broken SDK.
+  Future<bool> _isFlutterSdk(String root) async =>
+      await File(_path.join(root, 'bin', _host.flutterLauncherName))
+          .exists() &&
+      await Directory(_path.join(root, 'packages', 'flutter_tools')).exists();
+
+  /// Runs [launcher] with `--version --machine` and reads the SDK it reports.
+  ///
+  /// This is the one place the probe runs `flutter`. Through a shim there is
+  /// no other way to find the SDK, and running it also downloads that SDK's
+  /// Dart if it is cold, which is what the version file is then read from.
+  Future<ToolCandidate?> _flutterThroughLauncher(
+    String launcher,
+    String searchPath,
+    ToolSpec spec,
+  ) async {
+    final output = await _runForOutput(
+      launcher,
+      const ['--version', '--machine'],
+      environment: {
+        ..._host.essentialEnvironment(_env),
+        if (!_host.isWindows) ...{
+          'HOME': paths.home,
+          'TMPDIR': ?_env['TMPDIR'],
+        },
+        'PATH': await _launcherProbePath(launcher, searchPath),
+      },
+    );
+    final reported = parseFlutterRoot(output);
+    if (reported == null) return null;
+    final root = _path.normalize(reported);
+    if (!await _isFlutterSdk(root)) return null;
+
+    final sdk = await _flutterAt(root, spec);
+    return ToolCandidate(
+      id: ToolId.flutter,
+      source: sdk.source,
+      fitness: sdk.fitness,
+      reason: sdk.reason,
+      root: root,
+      executable: launcher,
+      detectedVersion: sdk.detectedVersion,
+      facts: {
+        ...sdk.facts,
+        'launcher': launcher,
+        'launcherPath': searchPath,
+      },
+    );
+  }
+
+  /// [searchPath] without the launcher's own folder, unless its wrapper lives
+  /// there too (Puro keeps `puro` beside its `flutter`).
+  ///
+  /// FVM's shim runs `fvm flutter`, and with neither a project pin nor
+  /// `fvm global` set, `fvm` runs the `flutter` on `PATH` — the shim again,
+  /// which recurses until the probe's timeout and is not killed by it. With
+  /// the shim's folder gone `fvm` finds nothing and says so, which is the
+  /// answer: that shim does not reach an SDK outside a pinned project.
+  Future<String> _launcherProbePath(String launcher, String searchPath) async {
+    final dir = _path.dirname(launcher);
+    for (final wrapper in FlutterWrapper.values) {
+      final beside = await whichOnPath(wrapper.command, dir,
+          host: _host, pathExt: _env['PATHEXT']);
+      if (beside != null) return searchPath;
+    }
+    return searchPath
+        .split(_host.pathListSeparator)
+        .where((entry) => entry.isNotEmpty && !_host.pathEquals(entry, dir))
+        .join(_host.pathListSeparator);
+  }
+
+  /// The Flutter version managers on this machine: the executable on `PATH`,
+  /// or the folder it keeps its SDKs in.
+  Future<List<FlutterWrapper>> _flutterWrappers() async {
+    final found = <FlutterWrapper>[];
+    for (final wrapper in FlutterWrapper.values) {
+      if (await _which(wrapper.command) != null) {
+        found.add(wrapper);
+        continue;
+      }
+      for (final dir in _wrapperHomes(wrapper)) {
+        if (await Directory(dir).exists()) {
+          found.add(wrapper);
+          break;
+        }
+      }
+    }
+    return found;
+  }
+
+  /// Where [wrapper] keeps its SDKs: FVM's cache (`~/fvm`, or `%LOCALAPPDATA%\fvm`
+  /// on Windows, unless `FVM_CACHE_PATH` moves it), Puro's root (`~/.puro`
+  /// unless `PURO_ROOT` does).
+  List<String> _wrapperHomes(FlutterWrapper wrapper) {
+    final home = paths.home;
+    return switch (wrapper) {
+      FlutterWrapper.fvm => [
+          ?_env['FVM_CACHE_PATH'],
+          _path.join(home, 'fvm'),
+          if (_host.isWindows) _path.join(home, 'AppData', 'Local', 'fvm'),
+        ],
+      FlutterWrapper.puro => [
+          ?_env['PURO_ROOT'],
+          _path.join(home, '.puro'),
+        ],
+    };
   }
 
   Future<ToolCandidate> _flutterAt(String root, ToolSpec spec) async {
@@ -487,33 +673,21 @@ class ToolProbe {
     );
   }
 
-  /// Every place a Flutter SDK is looked for, in precedence order: what the
-  /// user's own shell would run first, then the conventional locations.
-  Future<List<String>> _flutterRoots() async {
-    final roots = <String>[];
-    void add(String? path) {
-      if (path == null || path.isEmpty) return;
-      final normalized = _path.normalize(path);
-      if (!roots.any((r) => _host.pathEquals(r, normalized))) {
-        roots.add(normalized);
-      }
-    }
-
-    add(_env['FLUTTER_ROOT']);
-    final onPath = await _which('flutter');
-    if (onPath != null) {
-      // <root>/bin/flutter → <root>
-      add(_path.dirname(_path.dirname(await _resolveSymlink(onPath))));
-    }
-    add(record[ToolId.flutter]?.path);
-    add(paths.flutterInstallDir);
+  /// The places a Flutter SDK is looked for after `FLUTTER_ROOT` and `PATH`,
+  /// in precedence order. [_probeFlutter] drops the ones already seen.
+  List<String> _flutterRoots() {
     final home = paths.home;
-    add(_path.join(home, 'development', 'flutter'));
-    add(_path.join(home, 'flutter'));
-    add(_path.join(home, 'fvm', 'default'));
-    // Flutter's Windows instructions used to extract here.
-    if (_host.isWindows) add(r'C:srclutter');
-    return roots;
+    return [
+      ?record[ToolId.flutter]?.path,
+      paths.flutterInstallDir,
+      // Serverpod's install script, when the machine had no Flutter.
+      paths.installScriptFlutterDir,
+      _path.join(home, 'development', 'flutter'),
+      _path.join(home, 'flutter'),
+      _path.join(home, 'fvm', 'default'),
+      // Flutter's Windows instructions used to extract here.
+      if (_host.isWindows) r'C:\src\flutter',
+    ];
   }
 
   // -- Serverpod ------------------------------------------------------------
@@ -634,12 +808,20 @@ class ToolProbe {
   ///
   /// It is deliberately a *fallback*: the shell costs ~80 ms, and on a launch
   /// that already inherited a usable `PATH` it never runs at all.
-  Future<String?> _which(String command) async {
-    final inherited = await whichOnPath(command, _env['PATH'],
-        host: _host, pathExt: _env['PATHEXT']);
-    if (inherited != null) return inherited;
-    return whichOnPath(command, await _resolveLoginShellPath(),
-        host: _host, pathExt: _env['PATHEXT']);
+  Future<String?> _which(String command) async =>
+      (await _locate(command))?.path;
+
+  /// [_which], and the `PATH` it was found on — which a shim needs again to
+  /// reach its wrapper.
+  Future<({String path, String searchPath})?> _locate(String command) async {
+    Future<({String path, String searchPath})?> on(String? searchPath) async {
+      final found = await whichOnPath(command, searchPath,
+          host: _host, pathExt: _env['PATHEXT']);
+      return found == null ? null : (path: found, searchPath: searchPath!);
+    }
+
+    // The login shell is only asked when the inherited PATH comes up empty.
+    return await on(_env['PATH']) ?? await on(await _resolveLoginShellPath());
   }
 
   /// Memoises the *future*, not the value it settles to: two probes reach

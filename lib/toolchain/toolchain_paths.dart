@@ -95,6 +95,20 @@ class ToolchainPaths {
   /// too, because it is about Serverpod tooling rather than about App Studio.
   String get serverpodStateDir => _path.join(home, '.serverpod');
 
+  /// Where Serverpod's install script (`curl … install.sh | sh`) puts the
+  /// Flutter SDK it installs when the machine has none. Not App Studio's: it
+  /// is found like any other SDK, and uninstall leaves it alone.
+  String get installScriptFlutterDir => _path.join(serverpodStateDir, 'flutter');
+
+  /// What `serverpod doctor --fix` writes, and every shell startup file it
+  /// edited sources. Deleting it leaves each of those printing an error.
+  String get installScriptEnvFile => _path.join(serverpodStateDir, 'env.sh');
+
+  /// What [serverpodStateDir] holds that is not the CLI's own state, so an
+  /// uninstall that takes the CLI keeps it.
+  List<String> get keptOnUninstall =>
+      [installScriptFlutterDir, installScriptEnvFile];
+
   /// Windows: App Studio's machine-local data — the preview's CEF cache, which
   /// the runner puts in `%LOCALAPPDATA%\App Studio\CEF` (`windows/runner/
   /// main.cpp`). Null on macOS, where all of it is under [appSupportRoot].

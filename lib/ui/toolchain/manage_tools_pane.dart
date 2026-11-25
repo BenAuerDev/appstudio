@@ -110,10 +110,11 @@ class _ManageToolsPaneState extends State<ManageToolsPane> {
             const ShadGap(3),
             ErrorBanner(message: manualUpdateMessage(status)),
             if (status.bestRejected case final candidate?
-                when candidate.fitness == ToolFitness.wrongVersion) ...[
-              const ShadGap(2),
-              CommandBlock(command: manualUpdateCommand(candidate)),
-            ],
+                when candidate.fitness == ToolFitness.wrongVersion)
+              if (manualUpdateCommand(candidate) case final command?) ...[
+                const ShadGap(2),
+                CommandBlock(command: command),
+              ],
           ],
           if (pathLines.isNotEmpty) ...[
             const ShadGap(3),

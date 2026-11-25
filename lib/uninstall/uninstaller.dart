@@ -7,6 +7,7 @@ import '../agent/agent_controller.dart';
 import '../process/serverpod_process.dart';
 import '../toolchain/tool_status.dart';
 import '../toolchain/toolchain_controller.dart';
+import '../toolchain/toolchain_paths.dart';
 import '../update/session_teardown.dart';
 import 'uninstall_result.dart';
 
@@ -120,7 +121,7 @@ class Uninstaller {
     // CLI writes here on every run, and the cloud CLI holds its login here.
     if (choice.tools.contains(ToolId.serverpodCli)) {
       await step('deleting Serverpod\'s settings', () async {
-        await deleteDirectory(Directory(toolchains.paths.serverpodStateDir));
+        await deleteServerpodState(toolchains.paths);
         // The install record lived in there. Whatever App Studio installed and
         // the user chose to keep is still its to offer next time.
         await toolchains.persistRecord();
@@ -147,6 +148,35 @@ class Uninstaller {
 /// it open, and the ones that do are on their way out: the session was just
 /// torn down, and CEF's helper processes outlive its shutdown by a moment.
 /// Throws the last failure if [dir] is still there after every attempt.
+/// Deletes the Serverpod CLI's state in `~/.serverpod`, but not what
+/// Serverpod's install script keeps there: the Flutter SDK it installed and the
+/// `env.sh` the user's shell startup files source
+/// ([ToolchainPaths.keptOnUninstall]). Neither is App Studio's to remove, and
+/// a missing `env.sh` would print an error in every new terminal.
+///
+/// The directory goes whole when there is nothing to keep.
+Future<void> deleteServerpodState(ToolchainPaths paths) async {
+  final root = Directory(paths.serverpodStateDir);
+  if (!await root.exists()) return;
+  final host = paths.host;
+  bool kept(String path) =>
+      paths.keptOnUninstall.any((k) => host.pathEquals(k, path));
+
+  final children = await root.list(followLinks: false).toList();
+  if (!children.any((c) => kept(c.path))) {
+    await deleteDirectory(root);
+    return;
+  }
+  for (final child in children) {
+    if (kept(child.path)) continue;
+    if (child is Directory) {
+      await deleteDirectory(child);
+    } else {
+      await child.delete();
+    }
+  }
+}
+
 Future<void> deleteDirectory(
   Directory dir, {
   int attempts = 5,

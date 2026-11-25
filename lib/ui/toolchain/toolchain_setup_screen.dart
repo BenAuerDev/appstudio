@@ -53,9 +53,12 @@ class _ToolchainSetupScreenState extends State<ToolchainSetupScreen> {
     while (true) {
       if (!mounted || !toolchains.needsSetup) return;
       if (toolchains.needsFlutterNotice) {
-        await showFlutterInstallNotice(context);
+        // Closes on Continue, or once Check again finds a shim — which needs
+        // nothing recorded: the next probe finds it again.
+        final continued =
+            await showFlutterShimNotice(context, toolchains: toolchains);
         if (!mounted) return;
-        await toolchains.acknowledgeFlutterNotice();
+        if (continued) await toolchains.acknowledgeFlutterNotice();
         continue;
       }
       if (toolchains.inventory.legacyInstallFound) {

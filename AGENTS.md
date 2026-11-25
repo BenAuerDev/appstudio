@@ -750,7 +750,11 @@ Earlier builds kept every tool under
 ### Tool resolution (in the app)
 
 - `ToolchainController` (`lib/toolchain/toolchain_controller.dart`) owns the resolved `Toolchain`. **Consumers read `toolchains.current` at call time — never capture it**, or they strand on a snapshot taken before the user installed anything.
-- Every candidate is an ordinary install somewhere on the Mac; the record decides whether it is App Studio's. Flutter roots, in order: `FLUTTER_ROOT`, `flutter` on `PATH`, the recorded path, `~/develop/flutter`, `~/development/flutter`, `~/flutter`, `~/fvm/default`.
+- Every candidate is an ordinary install somewhere on the Mac; the record decides whether it is App Studio's. Flutter roots, in order: `FLUTTER_ROOT`, `flutter` on `PATH`, the recorded path, `~/develop/flutter`, `~/.serverpod/flutter` (Serverpod's install script), `~/development/flutter`, `~/flutter`, `~/fvm/default`, and on Windows `C:\src\flutter` (a mangled literal kept that one from ever being checked until now).
+- **A `flutter` on `PATH` outside its SDK is a shim, and is asked where its SDK is** — `flutter --version --machine`, reading `flutterRoot`, as the Serverpod CLI's `SdkResolver` does. FVM's `~/.fvm_shim/flutter`, Puro's `~/.puro/bin/flutter`, asdf's and mise's all land here. "Outside its SDK" means `<root>/packages/flutter_tools` is missing: Puro's shim sits at `~/.puro/bin/flutter`, which made `~/.puro` look like a broken SDK. This is the one place the probe runs `flutter`; through a shim there is no other way to learn the SDK. `parseFlutterRoot` skips the notices wrappers print around the JSON, JSON ones included.
+  - **The shim is run without its own folder on `PATH`**, unless its wrapper lives there too (Puro). FVM's shim runs `fvm flutter`, and with no project pin and no `fvm global`, `fvm` runs the `flutter` on `PATH` — the shim again, recursing until the probe's timeout, which does not kill it. Without the folder `fvm` finds nothing, which is the right answer: that shim reaches no SDK outside a pinned project.
+  - **A shim's Flutter is not pinned for spawned processes.** `processEnvironment` puts the shim's folder and the `PATH` it answered on first (its wrapper is there, which launchd's `PATH` would miss), and sets neither `FLUTTER_ROOT` nor `DART_SDK`. The runner then asks the shim from each project's folder, and FVM or Puro picks the SDK that project is pinned to. `flutterExecutable` is the shim, so `flutter pub get` goes through it too; `dartExecutable` is the reported SDK's, for `dart install serverpod_cli`.
+  - An old Flutter behind FVM or Puro is the user's (`ToolAction.manual`), and the update prompt gives the wrapper's command (`fvm global stable`, `puro upgrade <env>`) rather than `flutter upgrade`, which both tell you not to run inside their SDKs. Behind any other shim it gives no command (`manualUpdateCommand` returns null).
 - Executable getters are **nullable**. Spawn sites check `toolchain.unavailableReason(id)` first; a bare command name would only defer the failure to `Process.start`.
 - `Toolchain.resolve()` short-circuits at the first satisfied candidate (~350 ms). `deep: true` enumerates every candidate and is only for the Tools tab — the full sweep is too slow to run before `runApp`.
 - **The Command Line Tools are satisfied by `xcode-select -p` pointing at a directory with a real `usr/bin/git`** — the standalone tools or a full Xcode. Never execute `/usr/bin/{git,otool,install_name_tool,clang,ar,ld}` to find out: they are the CLT shims and pop a modal installer. Only App Studio's own install step opens that installer, on purpose.
@@ -1466,6 +1470,11 @@ class.
   login — and so does the install record. When the CLI goes, the directory
   goes, and `persistRecord()` writes back whatever App Studio installed that
   the user chose to keep, so it can still be offered next time.
+- **Except what Serverpod's install script keeps there** (`deleteServerpodState`,
+  `ToolchainPaths.keptOnUninstall`): the Flutter it installs into
+  `~/.serverpod/flutter`, and the `env.sh` that `serverpod doctor --fix` writes
+  and the user's shell startup files source. Neither is App Studio's, and a
+  missing `env.sh` prints an error in every new terminal.
 - Deliberately **not** removed: anything App Studio did not install, and
   `~/.local/share/opencode/auth.json` (API keys the OpenCode CLI uses
   independently of App Studio).
@@ -1580,7 +1589,7 @@ that could not work — there is no Flutter SDK to build with yet.
 - The gate is `ToolsView.needsSetup`: something App Studio can install or
   update, a Flutter the user has to update themselves, an earlier build's
   toolchain still to remove (all `ToolchainInventory.needsSetup`), or the
-  one-time Puro/FVM notice still unanswered. It is named rather than written out,
+  shim notice still due. It is named rather than written out,
   because three things have to agree on it and would otherwise drift: the screen `main.dart` picks, `MacAppMenu.canOpenProjects` — ⌘O, Open
   Recent and Settings would walk straight past the gate — and
   `StudioShell._showSettings`.
@@ -1660,20 +1669,30 @@ that could not work — there is no Flutter SDK to build with yet.
   hardcodes black.
 - **Setup is a sequence of dialogs over a spinner** (`_drive()` in
   `toolchain_setup_screen.dart`), each blocking on the user so the loop cannot
-  spin: the Puro/FVM notice, then the legacy notice and cleanup, then the
+  spin: the shim notice, then the legacy notice and cleanup, then the
   "update your Flutter" prompt, then the plan.
-- **The Puro/FVM notice (`FlutterInstallNotice`) is asked once, on a first
-  launch without a standard Flutter.** App Studio does not work with a Flutter
-  managed by Puro or FVM yet, and the notice points those users at Serverpod's
-  Quick Start instead; Quit or Continue. "Standard" is
-  `ToolchainInventory.standardFlutterFound`: a Flutter found outside `fvm`,
-  `.fvm` and `.puro` path segments — both managers resolve their symlinks into
-  their own folders. `ToolchainController.create` records the question as
-  answered (`setup.flutter_notice_seen`) when a standard Flutter is there, so
-  removing one later does not bring it back; Continue records it too. Quit
-  does not, so the next launch asks again. Uninstall clears preferences, so a
-  reinstall is a first launch. The Flutter prompt comes before the plan because the
-  Serverpod CLI is installed with that Flutter's `dart`.
+- **The shim notice (`FlutterShimNotice`) shows only when FVM or Puro is
+  installed and no `flutter` on `PATH` reaches it**
+  (`ToolchainInventory.flutterShimMissing`). A version manager is found by its
+  executable on `PATH` or its folder (`~/fvm`, `%LOCALAPPDATA%\fvm`, `~/.puro`,
+  or `FVM_CACHE_PATH` / `PURO_ROOT`); "reaches it" is `flutterOnPath`, a
+  `flutter` that is inside an SDK or a shim that reported one, at any version.
+  It used to show on every first launch without a "standard" Flutter — a clean
+  Mac included — and sent FVM and Puro users to the Quick Start; now that a
+  shim works, a user with one never sees it.
+  - It gives the shim steps for the detected wrappers and the host
+    (`shimSteps`). FVM's are the Serverpod CLI's own (`~/.fvm_shim/flutter`
+    running `exec fvm flutter "$@"`, `%USERPROFILE%\.fvm_shim\flutter.bat`
+    running `@fvm flutter %*`, plus `fvm global`), so following either
+    satisfies both. Puro ships its shim, so its step only puts `~/.puro/bin`
+    back on `PATH`.
+  - **Check again** re-probes (a fresh login shell, so an edited `.zshrc` is
+    read) and closes once a `flutter` is found. **Continue** records
+    `setup.flutter_notice_seen` and App Studio installs its own Flutter; it
+    is not asked again. **Quit** records nothing. Uninstall clears
+    preferences, so a reinstall asks again.
+- The Flutter prompt comes before the plan because the Serverpod CLI is
+  installed with that Flutter's `dart`.
 - **The plan is not raised until `ToolsView.preflight()` has answered.** Every
   version in it comes from Flutter's release feed and pub.dev; raising the
   dialog first and filling the table in afterwards is what made a slow network

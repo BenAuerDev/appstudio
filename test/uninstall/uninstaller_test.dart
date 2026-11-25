@@ -197,6 +197,31 @@ void main() {
     expect(record.owns(ToolId.flutter), isTrue);
   });
 
+  test('keeps the install script\'s Flutter and env.sh when ~/.serverpod '
+      'goes', () async {
+    // Serverpod's install script puts a Flutter in ~/.serverpod/flutter and
+    // has the user's shell startup files source ~/.serverpod/env.sh. Neither
+    // is App Studio's, and a missing env.sh errors in every new terminal.
+    final login = File(p.join(paths.serverpodStateDir, 'cloud', 'auth.json'));
+    await login.parent.create(recursive: true);
+    await login.writeAsString('{}');
+    final flutter =
+        File(p.join(paths.installScriptFlutterDir, 'bin', 'flutter'));
+    await flutter.parent.create(recursive: true);
+    await flutter.writeAsString('');
+    final env = File(paths.installScriptEnvFile);
+    await env.writeAsString('# Serverpod environment\n');
+
+    final result = await run(tools: {ToolId.serverpodCli});
+
+    expect(result.isClean, isTrue);
+    expect(await login.exists(), isFalse);
+    expect(await Directory(p.join(paths.serverpodStateDir, 'cloud')).exists(),
+        isFalse);
+    expect(await flutter.exists(), isTrue);
+    expect(await env.exists(), isTrue);
+  });
+
   test('reports a failure instead of aborting the rest', () async {
     await seedSupportDir();
     // Make the support directory's parent read-only so the recursive delete

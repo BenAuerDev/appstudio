@@ -65,11 +65,13 @@ ToolchainInventory _inventory(
   bool legacy = false,
   ToolManifest? manifest,
   bool longPathsDisabled = false,
+  List<FlutterWrapper> wrappers = const [],
 }) =>
     ToolchainInventory(
       manifest: manifest ?? previewManifest,
       legacyInstallFound: legacy,
       longPathsDisabled: longPathsDisabled,
+      flutterWrappers: wrappers,
       tools: {
         for (final entry in byTool.entries)
           entry.key: ToolStatus(
@@ -102,6 +104,19 @@ final emptyInventory = _inventory({
   for (final id in previewManifest.tools.keys)
     id: (const <ToolCandidate>[], ToolAction.install),
 });
+
+/// A clean Mac apart from FVM: no `flutter` on `PATH` to reach it, so setup
+/// opens on the shim notice.
+final fvmWithoutShimInventory = _inventory({
+  for (final id in previewManifest.tools.keys)
+    id: (const <ToolCandidate>[], ToolAction.install),
+}, wrappers: const [FlutterWrapper.fvm]);
+
+/// FVM and Puro both, neither reachable.
+final fvmAndPuroWithoutShimInventory = _inventory({
+  for (final id in previewManifest.tools.keys)
+    id: (const <ToolCandidate>[], ToolAction.install),
+}, wrappers: FlutterWrapper.values);
 
 /// The awkward middle — developer tools already there, Flutter missing, and a
 /// Serverpod CLI too old to use.
@@ -338,6 +353,7 @@ class FakeToolsView extends ChangeNotifier implements ToolsView {
     this.preflightNeverAnswers = false,
     this.manualPathLines = const [],
     this.needsFlutterNotice = false,
+    this.shimFoundOnRefresh = false,
   })  : inventory = inventory ?? completeInventory,
         plan = plan ?? previewPlan;
 
@@ -357,6 +373,10 @@ class FakeToolsView extends ChangeNotifier implements ToolsView {
   List<String> manualPathLines;
   @override
   bool needsFlutterNotice;
+
+  /// Whether [refreshDeep] finds a shim — the shim notice's Check again
+  /// succeeding.
+  bool shimFoundOnRefresh;
 
   @override
   bool get needsSetup => inventory.needsSetup || needsFlutterNotice;
@@ -384,7 +404,10 @@ class FakeToolsView extends ChangeNotifier implements ToolsView {
   int legacyRemovals = 0;
 
   @override
-  Future<void> refreshDeep() async => notifyListeners();
+  Future<void> refreshDeep() async {
+    if (shimFoundOnRefresh) needsFlutterNotice = false;
+    notifyListeners();
+  }
   @override
   Future<String?> preflight() async {
     if (preflightNeverAnswers) return Completer<String?>().future;

@@ -112,54 +112,60 @@ void main() {
     });
   });
 
-  group('standard Flutter', () {
-    ToolchainInventory withFlutterAt(String root) => ToolchainInventory(
+  group('flutterShimMissing', () {
+    ToolchainInventory inventory({
+      List<FlutterWrapper> wrappers = const [],
+      bool onPath = false,
+    }) =>
+        ToolchainInventory(
           manifest: manifest,
-          tools: {
-            ToolId.flutter: ToolStatus(
-              spec: manifest[ToolId.flutter]!,
-              candidates: [
-                ToolCandidate(
-                  id: ToolId.flutter,
-                  source: ToolSource.host,
-                  fitness: ToolFitness.satisfied,
-                  root: root,
-                ),
-              ],
-            ),
-          },
+          tools: const {},
+          flutterWrappers: wrappers,
+          flutterOnPath: onPath,
         );
 
-    test('an SDK in an ordinary folder is standard', () {
-      expect(withFlutterAt('/Users/a/develop/flutter').standardFlutterFound,
-          isTrue);
-      expect(withFlutterAt('/opt/homebrew/share/flutter').standardFlutterFound,
-          isTrue);
+    test('a Mac with no version manager never needs a shim', () {
+      // A clean Mac included: the notice used to show there too.
+      expect(inventory().flutterShimMissing, isFalse);
     });
 
-    test('an SDK managed by FVM or Puro is not', () {
-      for (final root in [
-        '/Users/a/fvm/versions/3.47.5',
-        '/Users/a/code/app/.fvm/flutter_sdk',
-        '/Users/a/.puro/envs/stable/flutter',
-      ]) {
-        expect(withFlutterAt(root).standardFlutterFound, isFalse,
-            reason: root);
-      }
-    });
-
-    test('a folder that merely mentions fvm is still standard', () {
-      // Whole path segments only.
-      expect(withFlutterAt('/Users/fvmfan/flutter').standardFlutterFound,
-          isTrue);
-    });
-
-    test('no Flutter at all is not a standard one', () {
+    test('a version manager with no flutter on PATH does', () {
       expect(
-        ToolchainInventory(manifest: manifest, tools: const {})
-            .standardFlutterFound,
+        inventory(wrappers: [FlutterWrapper.fvm]).flutterShimMissing,
+        isTrue,
+      );
+      expect(
+        inventory(wrappers: [FlutterWrapper.puro]).flutterShimMissing,
+        isTrue,
+      );
+    });
+
+    test('a flutter on PATH is the shim, whatever it leads to', () {
+      expect(
+        inventory(wrappers: FlutterWrapper.values, onPath: true)
+            .flutterShimMissing,
         isFalse,
       );
+    });
+  });
+
+  group('flutterWrapperFor', () {
+    test('names the manager that keeps an SDK', () {
+      expect(flutterWrapperFor('/Users/a/fvm/versions/3.47.5'),
+          FlutterWrapper.fvm);
+      expect(flutterWrapperFor('/Users/a/code/app/.fvm/flutter_sdk'),
+          FlutterWrapper.fvm);
+      expect(flutterWrapperFor('/Users/a/.puro/envs/stable/flutter'),
+          FlutterWrapper.puro);
+      expect(flutterWrapperFor(r'C:\Users\a\.puro\envs\stable\flutter'),
+          FlutterWrapper.puro);
+    });
+
+    test('an ordinary folder has none', () {
+      expect(flutterWrapperFor('/Users/a/develop/flutter'), isNull);
+      // Whole path segments only.
+      expect(flutterWrapperFor('/Users/fvmfan/flutter'), isNull);
+      expect(flutterWrapperFor(null), isNull);
     });
   });
 }

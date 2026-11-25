@@ -42,6 +42,20 @@ enum ToolId {
   }
 }
 
+/// The Flutter version managers App Studio looks for. Each needs a `flutter`
+/// on `PATH` that hands off to it — a shim — before App Studio, the Serverpod
+/// CLI or an editor can use the SDK it manages.
+enum FlutterWrapper {
+  fvm('fvm', 'FVM'),
+  puro('puro', 'Puro');
+
+  const FlutterWrapper(this.command, this.displayName);
+
+  /// The executable's name, and what is looked for on `PATH`.
+  final String command;
+  final String displayName;
+}
+
 /// Who put a tool on this Mac.
 ///
 /// Both are ordinary installs in the ordinary places — App Studio no longer
@@ -132,10 +146,20 @@ class ToolCandidate {
   final String? reason;
 
   /// Extra resolved paths a consumer needs: `flutterRoot`, `dartExecutable`,
-  /// `channel`.
+  /// `channel`, and for a Flutter reached through a shim, `launcher` and
+  /// `launcherPath`.
   final Map<String, String> facts;
 
   bool get isSatisfied => fitness == ToolFitness.satisfied;
+
+  /// A Flutter found through a `flutter` on `PATH` that is not inside the SDK
+  /// it runs — a version manager's shim. [executable] is then that shim, and
+  /// `flutterRoot` the SDK it reported.
+  String? get launcher => facts['launcher'];
+
+  /// The `PATH` the [launcher] was found and answered on. Its wrapper (`fvm`,
+  /// `puro`) is somewhere on it, which a Finder launch's `PATH` would miss.
+  String? get launcherPath => facts['launcherPath'];
 
   ToolCandidate copyWith({ToolFitness? fitness, String? reason}) {
     return ToolCandidate(
@@ -198,10 +222,26 @@ class ToolchainInventory {
     required this.tools,
     this.legacyInstallFound = false,
     this.longPathsDisabled = false,
+    this.flutterWrappers = const [],
+    this.flutterOnPath = false,
   });
 
   final ToolManifest manifest;
   final Map<ToolId, ToolStatus> tools;
+
+  /// The Flutter version managers on this machine: the executable on `PATH`
+  /// (the user's login shell's included), or the folder it keeps its SDKs in.
+  final List<FlutterWrapper> flutterWrappers;
+
+  /// Whether `flutter` on `PATH` leads to a Flutter SDK — the SDK's own, or a
+  /// shim that reported one. Its version does not matter here: an old one is
+  /// the update prompt's business.
+  final bool flutterOnPath;
+
+  /// A version manager is installed with no `flutter` on `PATH` to reach it,
+  /// so nothing — App Studio, the Serverpod CLI, an editor — can use the SDKs
+  /// it manages. The setup screen explains how to add a shim.
+  bool get flutterShimMissing => flutterWrappers.isNotEmpty && !flutterOnPath;
 
   /// A toolchain from a build that kept its own copies in Application Support,
   /// or the `PATH` block it wrote. Setup removes both before installing the
@@ -241,16 +281,6 @@ class ToolchainInventory {
           ) ??
       false;
 
-  /// Whether a Flutter SDK installed the standard way was found — one not
-  /// managed by FVM or Puro, which App Studio does not work with yet.
-  bool get standardFlutterFound =>
-      tools[ToolId.flutter]?.candidates.any(
-            (c) =>
-                c.fitness != ToolFitness.notFound &&
-                !isVersionManagedFlutter(c.root),
-          ) ??
-      false;
-
   /// Whether first-run setup still owns the window.
   ///
   /// Named because three things have to agree on it: the screen `main.dart`
@@ -263,12 +293,14 @@ class ToolchainInventory {
       needsManualUpdate.isNotEmpty;
 }
 
-/// Whether [root] is an SDK managed by FVM (`~/fvm/…`, a project's `.fvm/`) or
-/// Puro (`~/.puro/…`). Both resolve their `flutter` symlinks into their own
-/// directories, so the path says which one it is. Windows paths are split on
-/// either separator.
-bool isVersionManagedFlutter(String? root) {
-  if (root == null) return false;
+/// The version manager that keeps the SDK at [root]: FVM (`~/fvm/versions/…`,
+/// a project's `.fvm/`) or Puro (`~/.puro/envs/…`), or null for neither. Both
+/// keep their SDKs in their own folders, so the path says which one it is.
+/// Windows paths are split on either separator.
+FlutterWrapper? flutterWrapperFor(String? root) {
+  if (root == null) return null;
   final segments = root.split(RegExp(r'[/\\]'));
-  return segments.any((s) => s == 'fvm' || s == '.fvm' || s == '.puro');
+  if (segments.contains('.puro')) return FlutterWrapper.puro;
+  if (segments.any((s) => s == 'fvm' || s == '.fvm')) return FlutterWrapper.fvm;
+  return null;
 }
