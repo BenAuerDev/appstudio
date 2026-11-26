@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:meta/meta.dart';
@@ -11,6 +12,7 @@ import '../runner/runner_protocol.dart' show kHeadlessWebDevice;
 import '../session/project_settings.dart';
 import '../toolchain/tool_status.dart';
 import '../toolchain/toolchain_controller.dart';
+import '../util/command_output.dart';
 import 'ide_integration.dart';
 import 'tool_command.dart';
 
@@ -18,8 +20,6 @@ import 'tool_command.dart';
 // `ProjectSettings` needs it to be. Re-exported so the New Project dialog and
 // its tests still reach it through the creator, where it reads naturally.
 export 'ide_integration.dart';
-
-final _ansiEscape = RegExp(r'\x1B\[[0-9;]*[A-Za-z]');
 
 /// Agent instructions tuned for App Studio, written into every new project as
 /// its `AGENTS.md`.
@@ -49,12 +49,99 @@ String? validateProjectName(String name) {
 
 /// Failure while running `serverpod create` or preparing the project.
 class ProjectCreationException implements Exception {
-  ProjectCreationException(this.message, {this.log, this.createdPath});
+  ProjectCreationException(
+    this.message, {
+    this.log,
+    this.output,
+    this.createdPath,
+  });
+
+  /// Reads what a failed `serverpod create` printed.
+  ///
+  /// The CLI logs through `cli_tools`' `StdOutLogger`: with no terminal it
+  /// prefixes an error with `ERROR: ` — once, on its first line — and wraps
+  /// the whole message at 80 columns, never inside a word. Two shapes reach
+  /// us:
+  ///
+  /// - **A plain error**, `ERROR: Project x already exists.`, possibly
+  ///   wrapped over several lines. The [message] is the whole of it, joined
+  ///   back into one paragraph; the [log] is the end of the output, which is
+  ///   what led up to it.
+  /// - **An internal error** — an uncaught exception, which the CLI prints as
+  ///   its "Yikes! … please file an issue" paragraph, the issue URL, then the
+  ///   exception and its stack trace, all in one `log.error` call. The
+  ///   paragraph that matters is the one directly above the first stack
+  ///   frame, so that is the [message], and the [log] starts there: the
+  ///   exception and the top of the stack, which is where it was thrown. The
+  ///   bottom of the stack is `main` and says nothing.
+  ///
+  /// Either way [output] carries all of it, for a bug report.
+  factory ProjectCreationException.fromCliOutput(
+    String output, {
+    required int exitCode,
+    String? createdPath,
+  }) {
+    final lines = commandOutputLines(output);
+    final fallback = 'serverpod create failed (exit code $exitCode).';
+    final full = lines.join('\n');
+
+    final errorAt = lines.indexWhere((l) => l.startsWith('ERROR:'));
+    if (errorAt < 0) {
+      return ProjectCreationException(
+        fallback,
+        log: _tail(lines, from: lines.length),
+        output: full,
+        createdPath: createdPath,
+      );
+    }
+
+    final frameAt = lines.indexWhere(_isStackFrame, errorAt);
+    if (frameAt > errorAt) {
+      // The exception is the paragraph directly above the stack. It can be
+      // the `ERROR:` line itself, for an error logged with a stack trace but
+      // no "Yikes" preamble.
+      var start = frameAt;
+      while (start > errorAt && lines[start - 1].trim().isNotEmpty) {
+        start--;
+      }
+      final paragraph = _paragraph(lines.sublist(start, frameAt));
+      if (paragraph.isNotEmpty) {
+        return ProjectCreationException(
+          paragraph,
+          log: lines.sublist(start).join('\n'),
+          output: full,
+          createdPath: createdPath,
+        );
+      }
+    }
+
+    // A plain error: everything up to the next blank line, the next
+    // level-prefixed line, or a stack trace.
+    var end = errorAt + 1;
+    while (end < lines.length &&
+        lines[end].trim().isNotEmpty &&
+        !_levelPrefix.hasMatch(lines[end]) &&
+        !_isStackFrame(lines[end])) {
+      end++;
+    }
+    final paragraph = _paragraph(lines.sublist(errorAt, end));
+    return ProjectCreationException(
+      paragraph.isEmpty ? fallback : paragraph,
+      log: _tail(lines, from: errorAt),
+      output: full,
+      createdPath: createdPath,
+    );
+  }
 
   final String message;
 
-  /// Tail of the CLI output, when the failure came from `serverpod create`.
+  /// The part of the CLI output worth showing under [message], when the
+  /// failure came from `serverpod create`.
   final String? log;
+
+  /// Everything the CLI printed, for copying into a bug report. [log] is cut
+  /// to what explains the failure; this is not.
+  final String? output;
 
   /// Set when the project exists on disk despite the failure — it can still
   /// be opened.
@@ -62,6 +149,40 @@ class ProjectCreationException implements Exception {
 
   @override
   String toString() => message;
+}
+
+/// The longest [ProjectCreationException.message] taken from the CLI's
+/// output, in lines as it printed them. Past that it is cut with an ellipsis;
+/// the whole of it is still in the log, and copied with it.
+const _kMaxMessageLines = 8;
+
+/// The fewest lines of output the log shows for a plain error.
+const _kLogTailLines = 12;
+
+final _levelPrefix = RegExp(r'^(ERROR|WARNING|DEBUG): ');
+
+final _stackFrame = RegExp(r'^#\d+\s');
+
+bool _isStackFrame(String line) => _stackFrame.hasMatch(line);
+
+/// The last [_kLogTailLines] lines of [lines], reaching back to [from] if
+/// that is earlier, so the error is never cut off the top.
+String _tail(List<String> lines, {required int from}) {
+  final start = math.min(math.max(0, lines.length - _kLogTailLines), from);
+  return lines.sublist(start).join('\n');
+}
+
+/// [lines] unwrapped into one paragraph, without the level prefix. The CLI
+/// wraps at spaces only, so joining with a space puts the text back as it was
+/// logged.
+String _paragraph(List<String> lines) {
+  final cut = lines.length > _kMaxMessageLines;
+  final text = lines
+      .take(_kMaxMessageLines)
+      .map((l) => l.replaceFirst(_levelPrefix, '').trim())
+      .where((l) => l.isNotEmpty)
+      .join(' ');
+  return cut ? '$text …' : text;
 }
 
 /// Creates Serverpod projects with the bundled CLI and configures them for the
@@ -151,9 +272,9 @@ class ProjectCreator {
     );
 
     if (code != 0) {
-      throw ProjectCreationException(
-        _failureMessage(log.toString(), code),
-        log: _logTail(log.toString()),
+      throw ProjectCreationException.fromCliOutput(
+        log.toString(),
+        exitCode: code,
         createdPath: await Directory(projectPath).exists() ? projectPath : null,
       );
     }
@@ -299,35 +420,13 @@ class ProjectCreator {
     }
     await pubspec.writeAsString(patched);
   }
-
-  String _failureMessage(String log, int exitCode) {
-    final plain = log.replaceAll(_ansiEscape, '');
-    for (final line in const LineSplitter().convert(plain)) {
-      final trimmed = line.trim();
-      if (trimmed.startsWith('ERROR:')) {
-        return trimmed.substring('ERROR:'.length).trim();
-      }
-    }
-    return 'serverpod create failed (exit code $exitCode).';
-  }
-
-  String _logTail(String log, {int lines = 12}) {
-    final plain = log.replaceAll(_ansiEscape, '').replaceAll('\r', '\n');
-    final all = const LineSplitter()
-        .convert(plain)
-        .map((l) => l.trimRight())
-        .where((l) => l.isNotEmpty)
-        .toList();
-    if (all.length <= lines) return all.join('\n');
-    return all.sublist(all.length - lines).join('\n');
-  }
 }
 
 /// Last step line in [chunk] — the CLI redraws steps with `\r` and ends each
 /// one with an ellipsis (`Running serverpod generator...`). Completion and
 /// epilogue lines are skipped so the status keeps naming the running step.
 String? _lastStatusLine(String chunk) {
-  final plain = chunk.replaceAll(_ansiEscape, '').replaceAll('\r', '\n');
+  final plain = chunk.replaceAll(ansiEscapePattern, '').replaceAll('\r', '\n');
   for (final line in const LineSplitter().convert(plain).reversed) {
     final trimmed = line.trim();
     if (!trimmed.endsWith('...') && !trimmed.endsWith('…')) continue;

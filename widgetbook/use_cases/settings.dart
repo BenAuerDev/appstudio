@@ -62,7 +62,9 @@ final settingsFolder = WidgetbookFolder(
           builder: (_) => _settings(
             FakeToolsView(
               inventory: mixedInventory,
-              installError: 'Serverpod could not be installed.',
+              installError: sampleInstallFailure.message,
+              installErrorLog: sampleInstallFailure.detail,
+              installErrorOutput: sampleInstallFailure.output,
             ),
           ),
         ),

@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:appstudio/toolchain/toolchain_controller.dart';
@@ -13,6 +14,9 @@ import 'package:appstudio/session/project_session.dart';
 import 'package:appstudio/theme/app_theme.dart';
 import 'package:appstudio/ui/new_project_dialog.dart';
 import 'package:appstudio/util/pretty_path.dart';
+import 'package:appstudio/widgets/error_banner.dart';
+
+import '../widgetbook/fakes/project.dart';
 
 /// Existing directory the dialog can offer as the default location.
 final String _location = Directory.systemTemp
@@ -213,5 +217,72 @@ void main() {
     expect(find.text('Creating my_app'), findsOneWidget);
     // Nothing can reach the empty answer now, so there is nothing left to ask.
     expect(find.text('No external editor selected'), findsNothing);
+  });
+
+  testWidgets('a crashed CLI shows its exception, and copies all of it', (
+    tester,
+  ) async {
+    final copied = <String>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          copied.add((call.arguments as Map)['text'] as String);
+        }
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+    tester.view.physicalSize = const Size(900, 1200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      ShadApp(
+        theme: buildLightTheme(),
+        home: Scaffold(
+          body: NewProjectDialog(
+            actions: FakeNewProject(outcome: CreateOutcome.crashes),
+            initialName: 'bookshelf',
+            initialIde: IdeIntegration.cursor,
+            createOnOpen: true,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    // The line that says what went wrong, not the first line of "Yikes".
+    expect(
+      find.text(
+        'Exception: Error while parsing pubspec file: '
+        '/Users/someone/lab/dart/pubspec.yaml: '
+        "Instance of '_WrappedYamlException'",
+      ),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Yikes'), findsNothing);
+
+    await tester.tap(
+      find.descendant(
+        of: find.byType(ErrorBanner),
+        matching: find.byType(ShadIconButton),
+      ),
+    );
+    await tester.pump();
+    expect(copied.single, contains('Yikes!'));
+    expect(copied.single, contains('#11     main'));
+
+    // The form is still the form: the name field takes typing, and doing so
+    // clears the failure.
+    await tester.enterText(find.byType(ShadInput).first, 'bookshelf2');
+    await tester.pump();
+    expect(find.byType(ErrorBanner), findsNothing);
   });
 }

@@ -80,7 +80,11 @@ class _ManageToolsPaneState extends State<ManageToolsPane> {
           ),
           const ShadGap(3),
           if (toolchains.installError case final error?) ...[
-            ErrorBanner(message: error),
+            ErrorBanner(
+              message: error,
+              log: toolchains.installErrorLog,
+              fullLog: toolchains.installErrorOutput,
+            ),
             const ShadGap(3),
           ] else if (missing.isNotEmpty &&
               manual.isEmpty &&

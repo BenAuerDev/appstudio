@@ -43,6 +43,55 @@ class FakeRecentProjects extends ChangeNotifier implements RecentProjectsView {
   }
 }
 
+/// What Serverpod CLI 4.1.2 printed when `serverpod create` ran in a folder
+/// holding an unrelated project with an invalid `pubspec.yaml`. One
+/// `log.error` call — the "Yikes" paragraph, the issue URL, the exception and
+/// its stack — word-wrapped at 80 columns with `ERROR: ` on the first line.
+///
+/// Verbatim, apart from the elided paths: `test/project_creator_test.dart`
+/// pins the parsing against it.
+const kSampleInternalErrorOutput = '''
+ERROR: Yikes! It is possible that this error is caused by an internal issue with
+the Serverpod tooling. We would appreciate if you filed an issue over at Github.
+Please include the stack trace below and describe any steps you did to trigger
+the error.
+
+https://github.com/serverpod/serverpod/issues
+
+Exception: Error while parsing pubspec file: /Users/someone/lab/dart/pubspec.yaml:
+Instance of '_WrappedYamlException'
+#0      parsePubspec (package:serverpod_cli/src/util/pubspec_helpers.dart:16)
+#1      isServerDirectory (package:serverpod_cli/src/util/directory.dart:27)
+#2      findServerDirectory.<anonymous closure>
+(package:serverpod_cli/src/util/directory.dart:55)
+#3      Iterable.firstWhere (dart:core/iterable.dart:768)
+#4      findServerDirectory (package:serverpod_cli/src/util/directory.dart:54)
+#5      ServerpodCommandRunner.runCommand
+(package:serverpod_cli/src/runner/serverpod_command_runner.dart:182)
+#6      BetterCommandRunner.run
+(package:cli_tools/src/better_command_runner/better_command_runner.dart:401)
+<asynchronous suspension>
+#7      _main (file:///.../serverpod_cli-4.1.2/bin/serverpod_cli.dart:121)
+<asynchronous suspension>
+#8      main.<anonymous closure>
+(file:///.../serverpod_cli-4.1.2/bin/serverpod_cli.dart:68)
+<asynchronous suspension>
+#9      runZonedGuarded (dart:async/zone.dart:1902)
+#10     _rootRun (dart:async/zone.dart:1525)
+#11     main
+(file:///.../serverpod_cli-4.1.2/bin/serverpod_cli.dart:63)
+<asynchronous suspension>
+''';
+
+/// What the CLI prints when it cannot fetch its templates: a plain error,
+/// wrapped at 80 columns like everything it logs.
+const kSamplePlainErrorOutput = '''
+Downloading templates...
+ERROR: Could not download the required resources for Serverpod. Make sure that
+you are connected to the internet and that you are using the latest version of
+Serverpod.
+''';
+
 /// How [FakeNewProject.create] ends.
 enum CreateOutcome {
   /// Walks through the CLI's status lines, then succeeds.
@@ -51,8 +100,11 @@ enum CreateOutcome {
   /// Never finishes — the progress view, held.
   hangs,
 
-  /// `serverpod create` fails, with its output.
+  /// `serverpod create` fails with an error of its own.
   fails,
+
+  /// `serverpod create` crashes: an internal error, with a stack trace.
+  crashes,
 
   /// The project reached disk but could not be configured for the preview.
   partlyCreated,
@@ -83,11 +135,14 @@ class FakeNewProject implements NewProjectView {
         onStatus?.call('Resolving dependencies…');
         return Completer<String>().future;
       case CreateOutcome.fails:
-        throw ProjectCreationException(
-          'serverpod create failed (exit code 1).',
-          log: 'Creating project "$name"…\n'
-              'Error: Directory $path already exists and is not empty.\n'
-              'Pick another name or location and try again.',
+        throw ProjectCreationException.fromCliOutput(
+          kSamplePlainErrorOutput,
+          exitCode: 1,
+        );
+      case CreateOutcome.crashes:
+        throw ProjectCreationException.fromCliOutput(
+          kSampleInternalErrorOutput,
+          exitCode: 1,
         );
       case CreateOutcome.partlyCreated:
         throw ProjectCreationException(

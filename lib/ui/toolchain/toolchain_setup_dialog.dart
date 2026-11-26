@@ -201,7 +201,11 @@ class _ToolchainSetupDialogState extends State<ToolchainSetupDialog> {
       mainAxisSize: MainAxisSize.min,
       children: [
         if (toolchains.installError case final error?) ...[
-          ErrorBanner(message: error),
+          ErrorBanner(
+            message: error,
+            log: toolchains.installErrorLog,
+            fullLog: toolchains.installErrorOutput,
+          ),
           const SizedBox(height: 12),
         ],
         SettingsTable(
