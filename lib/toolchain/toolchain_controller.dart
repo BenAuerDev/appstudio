@@ -105,6 +105,8 @@ class ToolchainController extends ChangeNotifier implements ToolsView {
   InstallProgress? _progress;
   CancelToken? _cancel;
   String? _installError;
+  String? _installErrorLog;
+  String? _installErrorOutput;
   bool _finalizing = false;
 
   ToolchainInstaller get installer =>
@@ -153,6 +155,10 @@ class ToolchainController extends ChangeNotifier implements ToolsView {
       _finalizing || (_progress != null && !_progress!.isDone);
   @override
   String? get installError => _installError;
+  @override
+  String? get installErrorLog => _installErrorLog;
+  @override
+  String? get installErrorOutput => _installErrorOutput;
 
   @override
   bool get isBusy => isInstalling || _refreshing || _planning;
@@ -228,10 +234,18 @@ class ToolchainController extends ChangeNotifier implements ToolsView {
 
   // -- install --------------------------------------------------------------
 
-  /// Windows: appends a failed step, with the detail the setup screen leaves
-  /// out, to `setup.log` in App Studio's local data, where the clean-room
-  /// report (`tool/windows/vm_collect.ps1`) picks it up. A release build has
-  /// nowhere else to say what went wrong.
+  /// The three always move together: a log left over from the last failure
+  /// under the next one's message would explain the wrong thing.
+  void _setInstallError(String? message, {String? log, String? output}) {
+    _installError = message;
+    _installErrorLog = message == null ? null : log;
+    _installErrorOutput = message == null ? null : output;
+  }
+
+  /// Windows: appends a failed step, with the command's whole output, to
+  /// `setup.log` in App Studio's local data, where the clean-room report
+  /// (`tool/windows/vm_collect.ps1`) picks it up. The setup screen shows the
+  /// output too, but a VM run has nobody there to copy it.
   void _logFailure(ToolId id, String message, String? detail) {
     final root = paths.localDataRoot;
     if (root == null) return;
@@ -267,13 +281,13 @@ class ToolchainController extends ChangeNotifier implements ToolsView {
     if (!_plan.covers(ids)) {
       final error = await preflight();
       if (error != null) {
-        _installError = error;
+        _setInstallError(error);
         _notify();
         return;
       }
     }
 
-    _installError = null;
+    _setInstallError(null);
     _finalizing = true;
     final cancel = _cancel = CancelToken();
     final startedAt = DateTime.now();
@@ -291,6 +305,7 @@ class ToolchainController extends ChangeNotifier implements ToolsView {
     report();
     try {
       String? failure;
+      ToolInstallException? failed;
       for (final id in ids) {
         if (failure != null || cancel.isCancelled) {
           state[id] = state[id]!.copyWith(phase: ToolPhase.cancelled);
@@ -309,10 +324,12 @@ class ToolchainController extends ChangeNotifier implements ToolsView {
           // Each step needs the one before it — Flutter's `git`, the
           // Serverpod CLI's `dart` — so the first failure ends the run.
           failure = e is ToolInstallException ? e.message : '$e';
-          if (e is ToolInstallException && e.detail != null) {
-            debugPrint('ToolchainController: ${e.message}\n${e.detail}');
+          failed = e is ToolInstallException ? e : null;
+          final output = failed?.output ?? failed?.detail;
+          if (output != null) {
+            debugPrint('ToolchainController: $failure\n$output');
           }
-          _logFailure(id, failure, e is ToolInstallException ? e.detail : null);
+          _logFailure(id, failure, output);
           state[id] =
               state[id]!.copyWith(phase: ToolPhase.failed, error: failure);
         }
@@ -320,7 +337,11 @@ class ToolchainController extends ChangeNotifier implements ToolsView {
         // The next step reads what this one installed.
         await refresh();
       }
-      _installError = failure;
+      _setInstallError(
+        failure,
+        log: failed?.detail,
+        output: failed?.output,
+      );
       _cancel = null;
       await refresh(deep: true);
     } finally {

@@ -784,6 +784,12 @@ editor and any AI agent see exactly the tools App Studio runs:
   An empty directory is removed; anything else stops the install and says
   where. `flutter precache --web` runs after, best effort — Flutter fetches the
   same components on the first web build.
+- **A failed step shows its command's output, from the first error line on**
+  (`ToolInstallException.fromOutput`, `failureExcerpt` in
+  `util/command_output.dart`). A compiler, `git` or `dart install` names the
+  real problem first; the tail it replaced ended on "Failed to build". The
+  whole output rides along as `installErrorOutput` for the copy button, and
+  goes to `setup.log` on Windows.
 - **Apple's installer reports nothing, so it is polled.** `xcode-select
   --install` returns at once; the installer polls `xcode-select -p` for a real
   `git` every 3 s. It also watches for the `Install Command Line Developer
@@ -1271,6 +1277,7 @@ install. Sparkle would also catch it, but later and less clearly.
   — that is what it replaced, one different amount per dialog.
   `test/widgets/dialog_body_test.dart` measures the spacing and fails on a file
   with more dialogs than `DialogBody`s.
+- **`ErrorBanner` text is selectable, and a banner with a log has a copy button.** It is a `SelectionArea`, like the server log, so ⌘C/⌘A work and every other key reaches the form. Copy takes the message plus the *full* output (`fullLog`) in a ``` fence — unfenced, GitHub turns every `#12` stack frame into a link to issue 12. Pass `log` as the part worth showing and `fullLog` as all of it.
 - **`ShadBadge.secondary` is invisible on a `muted` card** — slate defines `secondary` and `muted` as the same colour, in both brightnesses. Use `.outline` on a muted surface, and check any `secondary`-on-`muted` pairing before assuming it reads.
 - **`onPressed: null` does not grey out a `ShadButton` — pass `enabled: false` too.** The dimming is an `Opacity(.5)` driven by `ShadState.disabled`, which shad sets from the `enabled` property alone; that defaults to `true` no matter what `onPressed` is. A null handler on its own gets you a button that is inert but looks live, which reads as a broken click rather than an unavailable action. Settings → Tools passes both. The toolbar's `_IconAction` derives it as `enabled: onPressed != null`, so Start and Stop dim like everything else.
 - **A `ShadTooltip` never opens on a disabled `ShadButton`** — which is exactly when its text is worth reading. `ShadTooltip` owns no `MouseRegion`: it injects `onHoverChange` into the theme's hover strategies and relies on the *child* to report hover, and a disabled button puts its content behind an `AbsorbPointer`, so nothing ever reports. Wrap the button in a bare `ShadGestureDetector` — that sits outside the absorber and reports hover regardless. `HotRestartButton` does this, because "start the server first" is the whole point of the tooltip there.
@@ -1868,6 +1875,7 @@ that could not work — there is no Flutter SDK to build with yet.
 - **Picking one is mandatory, and Create is what says so.** `_canCreate` waits on the editor as well as the name. This replaced a set of checkboxes that could all be left clear plus a "No external editor selected" prompt (Continue / Pick Editor) raised *after* the user had committed — a control that cannot express the empty answer says the same thing up front and needs no prompt. `_hasExternalEditor` and `_confirmNoExternalEditor` are gone with it.
 - **`builtIn` still exists and nothing sets it any more.** It meant "configured whether or not it was asked for", and OpenCode was the only one, because App Studio ran it as its own agent. With `kOpenCodeAgentEnabled` off there is no Agent tab, so `IdeIntegration.opencode` takes `builtIn: kOpenCodeAgentEnabled` and a new project gets exactly what was picked. `configuredIdes()` is consequently an identity function today; it is kept because the flag can come back. Do not mark OpenCode's option specially — a checked-and-disabled box was tried and deliberately reverted.
 - Names must match `^[a-z][a-z0-9_]*$` (they become Dart package names); the input folds case and drops separators as you type.
+- **A failed `serverpod create` is read, not tailed** (`ProjectCreationException.fromCliOutput`). The CLI logs through `cli_tools`, which with no terminal prefixes `ERROR: ` once and wraps the whole message at 80 columns, never inside a word. A plain error is the `ERROR:` paragraph re-joined; an uncaught exception ("Yikes! … file an issue") is the paragraph directly above the first `#0` frame, and the log starts there — the exception and the top of the stack, not the `main` at the bottom. `output` keeps everything, for the banner's copy button. Only a blank line tells an error's continuation from a following `info` line; the CLI exits after an error, so that is enough.
 - After the CLI succeeds, `patchFlutterAppForPreview` sets `device: web-server` on the `flutter_apps` entry in `<name>_server/pubspec.yaml` — without it the runner launches the app on `web-server-launch-browser`, which also opens the system browser. No port: the runner publishes the URL. The project is then opened, which auto-starts it.
 - Last used location is remembered in `ProjectSession` (`new_project_directory` pref).
 - **`IdeIntegration` lives in `process/ide_integration.dart`, not in the creator**, purely so `ProjectSettings` can use it without dragging `dart:io` in. `project_creator.dart` re-exports it, so every existing import still reads naturally.

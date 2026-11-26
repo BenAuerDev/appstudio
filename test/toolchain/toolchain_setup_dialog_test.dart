@@ -6,6 +6,7 @@ import 'package:appstudio/toolchain/install_progress.dart';
 import 'package:appstudio/toolchain/tool_status.dart';
 import 'package:appstudio/ui/toolchain/toolchain_setup_dialog.dart';
 import 'package:flutter/material.dart';
+import 'package:appstudio/widgets/error_banner.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shad/shad.dart';
 
@@ -212,14 +213,20 @@ void main() {
     await startDownload(tester, tools);
 
     tools.landDownloads();
-    tools.installError = 'dart install serverpod_cli failed.';
+    tools.installError = sampleInstallFailure.message;
+    tools.installErrorLog = sampleInstallFailure.detail;
+    tools.installErrorOutput = sampleInstallFailure.output;
     tools.finishReprobe();
     await settle(tester);
 
     // The dialog is the only thing on screen, so a failure has to leave the
     // user something to press.
     expect(find.byType(ToolchainSetupDialog), findsOneWidget);
-    expect(find.text('dart install serverpod_cli failed.'), findsOneWidget);
+    expect(find.text('Serverpod could not be installed.'), findsOneWidget);
     expect(find.text('Install'), findsOneWidget);
+    // And something to read: what the command said, not only that it failed.
+    final banner = tester.widget<ErrorBanner>(find.byType(ErrorBanner));
+    expect(banner.log, sampleInstallFailure.detail);
+    expect(banner.fullLog, sampleInstallFailure.output);
   });
 }

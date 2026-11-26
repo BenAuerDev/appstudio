@@ -13,6 +13,7 @@ import 'package:appstudio/toolchain/install_plan.dart';
 import 'package:appstudio/toolchain/install_progress.dart';
 import 'package:appstudio/toolchain/tool_status.dart';
 import 'package:appstudio/toolchain/tool_version.dart';
+import 'package:appstudio/toolchain/toolchain_installer.dart';
 import 'package:appstudio/toolchain/toolchain_manifest.dart';
 import 'package:appstudio/ui/toolchain/tools_view.dart';
 
@@ -333,6 +334,54 @@ final finishingProgress = InstallProgress(
 );
 
 // -----------------------------------------------------------------------------
+// A failed install
+// -----------------------------------------------------------------------------
+
+/// Output shaped like `dart install serverpod_cli` failing to compile — the
+/// Windows case `windowsInstallPubCache` exists for, where the CLI is built at
+/// the wrong language version. Illustrative, not captured verbatim: the
+/// resolution lines come first and run long, the errors that explain it come
+/// after, and the last line only says the build failed.
+const kSampleDartInstallFailure = '''
+Resolving dependencies...
+Downloading packages...
++ _fe_analyzer_shared 92.0.0
++ analyzer 9.0.0
++ archive 4.0.7
++ args 2.7.0
++ async 2.13.0
++ cli_tools 0.13.2
++ collection 1.19.1
++ crypto 3.0.6
++ http 1.5.0
++ meta 1.17.0
++ path 1.9.1
++ pub_semver 2.2.0
++ pubspec_parse 1.5.0
++ serverpod_cli 4.1.2
++ serverpod_shared 4.1.2
++ source_span 1.10.1
++ yaml 3.1.3
++ yaml_edit 2.2.2
+Changed 92 dependencies!
+Building package executable...
+Compiling bin/serverpod_cli.dart...
+../../hosted/pub.dev/serverpod_cli-4.1.2/lib/src/runner/runner_event.dart:41:12: Error: Can't have modifier 'final' here.
+  required final String event,
+           ^^^^^
+../../hosted/pub.dev/serverpod_cli-4.1.2/lib/src/runner/runner_event.dart:63:12: Error: Can't have modifier 'final' here.
+  required final String event,
+           ^^^^^
+Failed to build serverpod_cli:serverpod_cli.
+''';
+
+/// [kSampleDartInstallFailure] as the installer reports it.
+final sampleInstallFailure = ToolInstallException.fromOutput(
+  'Serverpod could not be installed.',
+  kSampleDartInstallFailure,
+);
+
+// -----------------------------------------------------------------------------
 // Fakes
 // -----------------------------------------------------------------------------
 
@@ -346,6 +395,8 @@ class FakeToolsView extends ChangeNotifier implements ToolsView {
     InstallPlan? plan,
     this.progress,
     this.installError,
+    this.installErrorLog,
+    this.installErrorOutput,
     this.isBusy = false,
     this.isInstalling = false,
     this.preflightError,
@@ -365,6 +416,10 @@ class FakeToolsView extends ChangeNotifier implements ToolsView {
   InstallProgress? progress;
   @override
   String? installError;
+  @override
+  String? installErrorLog;
+  @override
+  String? installErrorOutput;
   @override
   bool isBusy;
   @override

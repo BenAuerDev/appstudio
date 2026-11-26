@@ -105,6 +105,15 @@ final startFolder = WidgetbookFolder(
           ),
         ),
         WidgetbookUseCase(
+          name: 'CLI crashed',
+          builder: (_) => _createProject(
+            FakeNewProject(outcome: CreateOutcome.crashes),
+            name: 'bookshelf',
+            ide: IdeIntegration.cursor,
+            createOnOpen: true,
+          ),
+        ),
+        WidgetbookUseCase(
           name: 'Created but not configured',
           builder: (_) => _createProject(
             FakeNewProject(outcome: CreateOutcome.partlyCreated),

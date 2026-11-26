@@ -183,6 +183,10 @@ class _NewProjectDialogState extends State<NewProjectDialog> {
   String? _error;
   String? _errorLog;
 
+  /// All of the CLI's output, which the banner's copy button takes;
+  /// [_errorLog] is only the part of it shown.
+  String? _errorOutput;
+
   /// Set when the project reached disk but could not be fully configured.
   String? _createdPath;
 
@@ -210,6 +214,7 @@ class _NewProjectDialogState extends State<NewProjectDialog> {
       setState(() {
         _error = null;
         _errorLog = null;
+        _errorOutput = null;
         _createdPath = null;
       });
     } else {
@@ -235,6 +240,7 @@ class _NewProjectDialogState extends State<NewProjectDialog> {
       _directoryController.text = prettyPath(_directory);
       _error = null;
       _errorLog = null;
+      _errorOutput = null;
     });
   }
 
@@ -247,6 +253,7 @@ class _NewProjectDialogState extends State<NewProjectDialog> {
       _status = 'Starting Serverpod…';
       _error = null;
       _errorLog = null;
+      _errorOutput = null;
       _createdPath = null;
     });
 
@@ -268,6 +275,7 @@ class _NewProjectDialogState extends State<NewProjectDialog> {
         _status = null;
         _error = e.message;
         _errorLog = e.log;
+        _errorOutput = e.output;
         _createdPath = e.createdPath;
       });
     } catch (e) {
@@ -347,7 +355,11 @@ class _NewProjectDialogState extends State<NewProjectDialog> {
       children: [
         const SizedBox(height: 8),
         if (_error != null) ...[
-          ErrorBanner(message: _error!, log: _errorLog),
+          ErrorBanner(
+            message: _error!,
+            log: _errorLog,
+            fullLog: _errorOutput,
+          ),
           const SizedBox(height: 16),
         ],
         FieldLabel('Project name'),
