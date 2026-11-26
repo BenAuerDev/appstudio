@@ -14,13 +14,17 @@ import '../ui/server_log/log_view_controller.dart';
 import '../ui/server_log/server_log_view.dart';
 import '../util/open_url.dart';
 import '../util/prompt_generator.dart';
+import 'host_platform.dart';
 
-/// The Windows counterpart of [MacAppMenu]: the same commands with the same
-/// rules for when each is live, as a menu strip across the top of the window
-/// with `Ctrl` shortcuts — Windows has no menu bar of its own to add them to.
+/// The Windows and Linux counterpart of [MacAppMenu]: the same commands with
+/// the same rules for when each is live, as a menu strip across the top of the
+/// window with `Ctrl` shortcuts — neither has a menu bar of its own to add
+/// them to.
 ///
 /// File · View · Server · Logs · Help, the Windows order: Settings and Exit
-/// live in File, updates and Uninstall in Help. Every enabled/checked rule
+/// live in File, updates and Uninstall in Help. On Linux ([host]) Exit is
+/// Quit on Ctrl+Q, as Linux apps name it, and Uninstall is left out until
+/// the uninstaller knows Linux's folders (specs/linux_port.md, PR 5). Every enabled/checked rule
 /// here is the one `macos_app_menu.dart` applies to the same command; the two
 /// are kept apart so macOS's native menu is untouched.
 ///
@@ -50,7 +54,12 @@ class WindowsAppMenuBar extends StatefulWidget {
     required this.changes,
     required this.child,
     this.stripHidden,
+    this.host = HostPlatform.windows,
   });
+
+  /// Windows or Linux: the two differ in how quitting is named and bound, and
+  /// in whether Uninstall is offered.
+  final HostPlatform host;
 
   final ProjectSession session;
   final ServerpodProcessController process;
@@ -224,6 +233,7 @@ class _WindowsAppMenuBarState extends State<WindowsAppMenuBar> {
       LogicalKeyboardKey.keyR => shift ? _fullRestart : _hotRestart,
       LogicalKeyboardKey.keyM when !shift => _migrate,
       LogicalKeyboardKey.keyL when !shift => _toggleLogs,
+      LogicalKeyboardKey.keyQ when !shift && widget.host.isLinux => _exit,
       _ => null,
     };
     if (action == null) return false;
@@ -357,7 +367,9 @@ class _WindowsAppMenuBarState extends State<WindowsAppMenuBar> {
         onPressed: _settings,
       ),
       _divider,
-      _item('Exit', shortcut: 'Alt+F4', onPressed: _exit),
+      widget.host.isLinux
+          ? _item('Quit', shortcut: 'Ctrl+Q', onPressed: _exit)
+          : _item('Exit', shortcut: 'Alt+F4', onPressed: _exit),
     ];
   }
 
@@ -479,8 +491,10 @@ class _WindowsAppMenuBarState extends State<WindowsAppMenuBar> {
             widget.onSetAutomaticUpdates(!widget.automaticUpdatesEnabled()),
       ),
       _divider,
-      _item('Uninstall App Studio...', onPressed: widget.onUninstall),
-      _divider,
+      if (!widget.host.isLinux) ...[
+        _item('Uninstall App Studio...', onPressed: widget.onUninstall),
+        _divider,
+      ],
       _item('About App Studio', onPressed: widget.onAbout),
     ];
   }

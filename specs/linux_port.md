@@ -46,6 +46,7 @@ uninstall.
 | L2 | **Tested on Ubuntu and Arch (Omarchy, Hyprland).** Not on Fedora for now. Omarchy is Wayland and a tiling window manager, so it is the hard case. |
 | L3 | **No Flatpak.** Its sandbox gets in the way of everything App Studio does outside itself: installing Flutter into `~/develop`, editing the shell profile, starting the user's tools. |
 | L4 | **App Studio never runs `sudo` or `pkexec`.** It installs Flutter and the Serverpod CLI per user, as on macOS and Windows. For system packages (git, curl, unzip, xz), setup checks and gives the distro's own install command with a **Check again** button, the same pattern as `ManualUpdateDialog`. The `.deb` and `.rpm` declare them as dependencies instead. |
+| L5 | **One data folder, named after the app id: `$XDG_DATA_HOME/dev.serverpod.appstudio`** (default `~/.local/share/dev.serverpod.appstudio`). `shared_preferences` already keeps the settings there on Linux, so App Studio's own data joins them: one folder, removed in one go, and the lowercase, space-free name Linux folders usually have. macOS and Windows keep their "App Studio" folders. |
 
 ---
 
@@ -184,16 +185,15 @@ macOS paths and commands:
 
 | What | Linux | Follows |
 |---|---|---|
-| App data (F1) | `$XDG_DATA_HOME/App Studio` (default `~/.local/share/App Studio`) | Q2 |
+| App data (F1) | `$XDG_DATA_HOME/dev.serverpod.appstudio` (default `~/.local/share/dev.serverpod.appstudio`) | L5 |
 | CEF cache (F3) | `<app data>/CEF`, set by the runner through `setRootCachePath` before CEF starts | — |
-| Preferences (F3) | where `shared_preferences` puts them: `$XDG_DATA_HOME/<APPLICATION_ID>/shared_preferences.json`, with `APPLICATION_ID` `dev.serverpod.appstudio` | Q2 |
+| Preferences (F3) | where `shared_preferences` puts them: `$XDG_DATA_HOME/<APPLICATION_ID>/shared_preferences.json`, with `APPLICATION_ID` `dev.serverpod.appstudio`: the same folder | L5 |
 | Flutter | `~/develop/flutter`, as on macOS | — |
 | `dart install` (F2) | `$XDG_STATE_HOME/Dart/install/bin` (section 2) | — |
 | Pub cache | `~/.pub-cache` | — |
 | `~/.serverpod` | unchanged | — |
 
-App data and preferences would land in two sibling folders. Picking one
-name for both (Q2) makes uninstall one delete.
+App data and preferences share one folder (L5), so uninstall is one delete.
 
 ### 4.2 The Linux app shell (PR 1)
 
@@ -405,9 +405,7 @@ For Serverpod, since updates and releases are theirs:
    AppImageUpdate) can update it from wherever Serverpod hosts it. Is that
    enough, or should updates go through apt/dnf repositories (which need GPG
    signing and hosting)?
-2. **Folder name.** One data folder named after the app id
-   (`dev.serverpod.appstudio`), or "App Studio" as on macOS and Windows?
-3. **Ubuntu baseline.** 24.04 LTS?
+2. **Ubuntu baseline.** 24.04 LTS?
 
 ---
 
