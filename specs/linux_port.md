@@ -328,9 +328,9 @@ macOS and Windows CI green.
 - System packages check, Flutter, Serverpod CLI, `PATH` lines, copy (4.3).
 - Widgetbook use cases for the system packages step.
 - Done when: on a fresh Ubuntu user account, setup installs Flutter and the
-  CLI and lands on the start page; on Omarchy it finds the existing asdf
-  Flutter, reinstalls the too-old `dart install` CLI (4.0.4 on the dev
-  machine) and nothing else.
+  CLI and lands on the start page; on Omarchy it finds the system packages,
+  the existing asdf Flutter (and asks for it to be updated when it is too
+  old) and the Serverpod CLI already on `PATH`, and installs nothing.
 
 ### PR 3: Preview works (`linux/3-preview`) [Tuesday]
 
