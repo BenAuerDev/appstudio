@@ -12,6 +12,7 @@ import '../platform/windows/win32_system.dart';
 import '../platform/windows/windows_roots.dart';
 import '../platform/windows/windows_system.dart';
 import '../process/tool_command.dart';
+import '../util/command_output.dart';
 import 'install_plan.dart';
 import 'install_progress.dart';
 import 'install_record.dart';
@@ -23,10 +24,28 @@ import 'tool_version.dart';
 import 'toolchain_paths.dart';
 
 class ToolInstallException implements Exception {
-  const ToolInstallException(this.message, {this.detail});
+  const ToolInstallException(this.message, {this.detail, this.output});
+
+  /// A step that ran a command and failed: [detail] is the part of its
+  /// [output] that explains why — from the first error line on — and
+  /// [output] is all of it, for copying into a bug report.
+  factory ToolInstallException.fromOutput(String message, String output) {
+    final lines = commandOutputLines(output);
+    return ToolInstallException(
+      message,
+      detail: lines.isEmpty ? null : failureExcerpt(lines),
+      output: lines.isEmpty ? null : lines.join('\n'),
+    );
+  }
 
   final String message;
+
+  /// What to show under [message]: a command's output, cut to what explains
+  /// the failure, or the error behind a step that ran no command.
   final String? detail;
+
+  /// Everything the command printed, when [detail] is only part of it.
+  final String? output;
 
   @override
   String toString() => message;
@@ -307,12 +326,12 @@ class ToolchainInstaller {
     }
     final root = result.exitCode == 0 ? await installedGitRoot() : null;
     if (root == null) {
-      throw ToolInstallException(
+      throw ToolInstallException.fromOutput(
         result.exitCode == 0
             ? 'Git for Windows installed, but App Studio cannot find it.'
             : 'Git for Windows could not be installed '
                 '(exit ${result.exitCode}).',
-        detail: _tail('${result.stdout}\n${result.stderr}'),
+        '${result.stdout}\n${result.stderr}',
       );
     }
     await _enableGitLongPaths(_host.path.join(root, 'cmd', 'git.exe'));
@@ -396,9 +415,9 @@ class ToolchainInstaller {
       '/SUPPRESSMSGBOXES',
     ]);
     if (result.exitCode != 0) {
-      throw ToolInstallException(
+      throw ToolInstallException.fromOutput(
         'Git for Windows could not be uninstalled (exit ${result.exitCode}).',
-        detail: _tail('${result.stdout}\n${result.stderr}'),
+        '${result.stdout}\n${result.stderr}',
       );
     }
     final deadline = DateTime.now().add(gitUninstallTimeout);
@@ -672,9 +691,9 @@ class ToolchainInstaller {
     ));
     final result = await _runFlutter(root, const ['upgrade']);
     if (result.exitCode != 0) {
-      throw ToolInstallException(
+      throw ToolInstallException.fromOutput(
         'Flutter could not be updated.',
-        detail: _tail('${result.stdout}\n${result.stderr}'),
+        '${result.stdout}\n${result.stderr}',
       );
     }
     final info = FlutterInfo.parse(await File(
@@ -765,14 +784,14 @@ class ToolchainInstaller {
     if (result.exitCode != 0) {
       final output = '${result.stdout}\n${result.stderr}';
       if (previous != null) await restoreLauncher(previous);
-      throw ToolInstallException(
+      throw ToolInstallException.fromOutput(
         // Windows will not delete an executable that is running.
         _host.isWindows && output.contains('might be in use')
             ? 'Serverpod could not be updated while the installed version is '
                 'running. Close other Serverpod servers and the AI agents '
                 'using Serverpod, or restart the computer, then try again.'
             : 'Serverpod could not be installed.',
-        detail: _tail(output),
+        output,
       );
     }
 
@@ -802,9 +821,9 @@ class ToolchainInstaller {
         const ['uninstall', 'serverpod_cli'],
       );
       if (result.exitCode != 0) {
-        throw ToolInstallException(
+        throw ToolInstallException.fromOutput(
           'Serverpod could not be uninstalled.',
-          detail: _tail('${result.stdout}\n${result.stderr}'),
+          '${result.stdout}\n${result.stderr}',
         );
       }
     } else if (owned.path case final path?) {
@@ -1081,9 +1100,9 @@ class ToolchainInstaller {
             ['-q', '-o', archive.path, '-d', into.path],
           );
     if (result.exitCode != 0) {
-      throw ToolInstallException(
+      throw ToolInstallException.fromOutput(
         'Could not unpack Flutter.',
-        detail: _tail('${result.stderr}'),
+        '${result.stderr}',
       );
     }
   }
@@ -1114,14 +1133,6 @@ class ToolchainInstaller {
         await entity.delete(recursive: true);
       }
     } catch (_) {}
-  }
-
-  static String _tail(String output) {
-    final lines = const LineSplitter()
-        .convert(output.trim())
-        .where((l) => l.trim().isNotEmpty)
-        .toList();
-    return lines.skip(lines.length > 20 ? lines.length - 20 : 0).join('\n');
   }
 
   static String _stamp() => DateTime.now().microsecondsSinceEpoch.toString();

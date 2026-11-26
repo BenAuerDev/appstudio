@@ -161,7 +161,9 @@ final firstRunFolder = WidgetbookFolder(
             'After a failed install',
             FakeToolsView(
               inventory: emptyInventory,
-              installError: 'Serverpod could not be installed.',
+              installError: sampleInstallFailure.message,
+              installErrorLog: sampleInstallFailure.detail,
+              installErrorOutput: sampleInstallFailure.output,
             ),
           ),
           (

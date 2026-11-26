@@ -33,7 +33,17 @@ abstract interface class ToolsView implements Listenable {
   InstallPlan get plan;
 
   InstallProgress? get progress;
+
+  /// Why the last install failed, in a sentence. Null while it has not.
   String? get installError;
+
+  /// The failing command's output, cut to the part that explains
+  /// [installError] — shown under it. Null when no command produced any.
+  String? get installErrorLog;
+
+  /// All of the failing command's output, which the error's copy button
+  /// takes. Null when [installErrorLog] is already all of it.
+  String? get installErrorOutput;
 
   bool get isBusy;
   bool get isInstalling;

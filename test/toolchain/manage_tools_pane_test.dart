@@ -4,8 +4,10 @@ import 'package:appstudio/toolchain/install_plan.dart';
 import 'package:appstudio/toolchain/tool_status.dart';
 import 'package:appstudio/ui/toolchain/manage_tools_pane.dart';
 import 'package:appstudio/widgets/command_block.dart';
+import 'package:appstudio/widgets/error_banner.dart';
 import 'package:appstudio/widgets/settings_table.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../support/host_skips.dart';
@@ -23,6 +25,50 @@ void main() {
     );
     await tester.pump();
   }
+
+  testWidgets('a failed install shows why, and copies all of it', (
+    tester,
+  ) async {
+    final copied = <String>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          copied.add((call.arguments as Map)['text'] as String);
+        }
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null),
+    );
+    final failure = sampleInstallFailure;
+    await pumpPane(
+      tester,
+      FakeToolsView(
+        inventory: mixedInventory,
+        installError: failure.message,
+        installErrorLog: failure.detail,
+        installErrorOutput: failure.output,
+      ),
+    );
+
+    final banner = tester.widget<ErrorBanner>(find.byType(ErrorBanner));
+    expect(banner.message, 'Serverpod could not be installed.');
+    expect(banner.log, contains("Error: Can't have modifier 'final' here."));
+
+    await tester.tap(
+      find.descendant(
+        of: find.byType(ErrorBanner),
+        matching: find.byType(ShadIconButton),
+      ),
+    );
+    await tester.pump();
+    // The whole output, package list included, not just what is shown.
+    expect(copied.single, contains('+ analyzer 9.0.0'));
+    expect(copied.single, startsWith('Serverpod could not be installed.'));
+  });
 
   testWidgets('lists every tool with its version and who installed it',
       (tester) async {
