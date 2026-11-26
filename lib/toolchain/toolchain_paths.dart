@@ -28,6 +28,7 @@ class ToolchainPaths {
     required this.home,
     required this.appSupportRoot,
     this._host,
+    this._stateHome,
   });
 
   /// Resolves from the home directory (`HOME`, or `USERPROFILE` on Windows).
@@ -75,6 +76,7 @@ class ToolchainPaths {
         ),
       },
       host: resolvedHost,
+      stateHome: _xdgDir(environment['XDG_STATE_HOME'], path),
     );
   }
 
@@ -92,6 +94,9 @@ class ToolchainPaths {
 
   final HostPlatform? _host;
 
+  /// Linux: `XDG_STATE_HOME` when it was set, for [dartInstallBinDir].
+  final String? _stateHome;
+
   /// The machine these paths are for.
   HostPlatform get host => _host ?? currentHost;
 
@@ -103,17 +108,33 @@ class ToolchainPaths {
   /// indistinguishable from an install done by hand.
   String get flutterInstallDir => _path.join(home, 'develop', 'flutter');
 
-  /// Where `dart install` puts executables.
-  String get dartInstallBinDir => host.isWindows
-      ? _path.join(home, 'AppData', 'Local', 'Dart', 'install', 'bin')
-      : _path.join(
-          home,
-          'Library',
-          'Application Support',
-          'Dart',
-          'install',
-          'bin',
-        );
+  /// Where `dart install` puts executables. On Linux that is under
+  /// `$XDG_STATE_HOME` (`~/.local/state`), with a capital D, each one a
+  /// symlink into the package's bundle.
+  String get dartInstallBinDir => switch (host.os) {
+    HostOs.windows => _path.join(
+      home,
+      'AppData',
+      'Local',
+      'Dart',
+      'install',
+      'bin',
+    ),
+    HostOs.linux => _path.join(
+      _stateHome ?? _path.join(home, '.local', 'state'),
+      'Dart',
+      'install',
+      'bin',
+    ),
+    HostOs.macos => _path.join(
+      home,
+      'Library',
+      'Application Support',
+      'Dart',
+      'install',
+      'bin',
+    ),
+  };
 
   /// The pub cache when `PUB_CACHE` does not say otherwise.
   String get defaultPubCache => host.isWindows
