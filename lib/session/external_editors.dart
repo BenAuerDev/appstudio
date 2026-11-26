@@ -25,12 +25,29 @@ import 'project_settings.dart';
 /// Picking the wrong door is not loud: `open` exits 0 for an app that launched
 /// and dropped the path exactly as it does for one that opened it.
 class _EditorApp {
-  const _EditorApp(this.appName, {this.deepLink, this.cli});
+  const _EditorApp(
+    this.appName, {
+    this.alsoNamed = const [],
+    this.bundleId,
+    this.deepLink,
+    this.cli,
+  });
 
   /// Bundle name under one of [_applicationDirectories]. Doubles as the
   /// installed check, which [deepLink] needs even more than the rest do:
   /// `open <scheme>://…` fails *silently* when nothing claims the scheme.
   final String appName;
+
+  /// Other names the same app has shipped under, tried after [appName].
+  final List<String> alsoNamed;
+
+  /// The `CFBundleIdentifier` a bundle found by name must carry, or null to
+  /// take the name alone. Needed where a name is shared with a different app:
+  /// `ChatGPT.app` is the Codex app today and was the plain chat app before.
+  final String? bundleId;
+
+  /// Every name to look for, in order.
+  List<String> get appNames => [appName, ...alsoNamed];
 
   /// Builds the URL for an app that takes the project as a deep link. Null
   /// means it accepts the folder as a document — `open -a <bundle> <path>`.
@@ -74,6 +91,14 @@ class _EditorCli {
 /// that takes a project directory. A CLI does not qualify — there is no window
 /// to open a folder in, and "open in …" has to mean something visible.
 ///
+/// **Codex is `ChatGPT.app`.** OpenAI folded the Codex desktop app into
+/// ChatGPT: the bundle is named `ChatGPT.app`, carries the identifier
+/// `com.openai.codex` and claims `codex:`. Looking for `Codex.app` found
+/// nothing, so the button never appeared. The identifier is checked because
+/// an older `ChatGPT.app` is the chat-only app (`com.openai.chat`), which has
+/// no `codex:` scheme; `Codex.app` is still tried for a copy from before the
+/// rename.
+///
 /// **Antigravity is `Antigravity IDE.app`, not `Antigravity.app`.** The latter
 /// is a thin Electron shell around a Go language server, with no `open-file`
 /// handler and no `CFBundleDocumentTypes`, so a folder handed to it is dropped
@@ -86,7 +111,12 @@ const _editorApps = <IdeIntegration, _EditorApp>{
   IdeIntegration.vscode: _EditorApp('Visual Studio Code'),
   IdeIntegration.antigravity: _EditorApp('Antigravity IDE'),
   IdeIntegration.claude: _EditorApp('Claude', deepLink: _claudeDeepLink),
-  IdeIntegration.codex: _EditorApp('Codex', deepLink: _codexDeepLink),
+  IdeIntegration.codex: _EditorApp(
+    'ChatGPT',
+    alsoNamed: ['Codex'],
+    bundleId: 'com.openai.codex',
+    deepLink: _codexDeepLink,
+  ),
   IdeIntegration.opencode: _EditorApp('OpenCode', deepLink: _openCodeDeepLink),
 };
 
@@ -231,7 +261,7 @@ class ExternalEditorsController extends ChangeNotifier
     required this.session,
     required this.process,
     Future<Set<IdeIntegration>> Function(String projectPath)? readEditors,
-    String? Function(String appName)? findApp,
+    String? Function(String appName, String? bundleId)? findApp,
     bool Function(String path)? fileExists,
     Future<bool> Function(List<String> command)? launch,
     HostPlatform? host,
@@ -255,7 +285,7 @@ class ExternalEditorsController extends ChangeNotifier
   final ProjectReadyView process;
 
   final Future<Set<IdeIntegration>> Function(String projectPath) _readEditors;
-  final String? Function(String appName) _findApp;
+  final String? Function(String appName, String? bundleId) _findApp;
   final bool Function(String path) _fileExists;
   final Future<bool> Function(List<String> command) _launch;
 
@@ -263,7 +293,7 @@ class ExternalEditorsController extends ChangeNotifier
   final WindowsSystem? _windowsSystem;
   final Map<String, String>? _environment;
   final Future<bool> Function(String exe, List<String> arguments)
-      _runElectronCli;
+  _runElectronCli;
 
   WindowsSystem get _windows => _windowsSystem ?? Win32System();
 
@@ -301,10 +331,13 @@ class ExternalEditorsController extends ChangeNotifier
       final target = _windowsTargets[editor.id];
       if (target == null) return;
       launched = switch (target) {
-        _FoundLink(:final link) =>
-          _windows.shellOpen(link(projectPath).toString()),
-        _FoundCli(:final exe, :final script) =>
-          await _runElectronCli(exe, [script, projectPath]),
+        _FoundLink(:final link) => _windows.shellOpen(
+          link(projectPath).toString(),
+        ),
+        _FoundCli(:final exe, :final script) => await _runElectronCli(exe, [
+          script,
+          projectPath,
+        ]),
       };
     } else {
       final resolved = _resolved[editor.id];
@@ -354,7 +387,12 @@ class ExternalEditorsController extends ChangeNotifier
       final configured = await _readEditors(projectPath);
       for (final entry in _editorApps.entries) {
         if (!configured.contains(entry.key)) continue;
-        final appPath = _findApp(entry.value.appName);
+        final app = entry.value;
+        String? appPath;
+        for (final name in app.appNames) {
+          appPath = _findApp(name, app.bundleId);
+          if (appPath != null) break;
+        }
         if (appPath == null) continue;
         editors.add(
           ExternalEditor(id: entry.key.option, label: entry.key.label),
@@ -493,12 +531,36 @@ List<String> _applicationDirectories() => [
 
 bool _defaultFileExists(String path) => File(path).existsSync();
 
-String? _defaultFindApp(String appName) {
+String? _defaultFindApp(String appName, String? bundleId) {
   for (final dir in _applicationDirectories()) {
     final path = p.join(dir, '$appName.app');
-    if (Directory(path).existsSync()) return path;
+    if (!Directory(path).existsSync()) continue;
+    if (bundleId == null || _bundleIdentifier(path) == bundleId) return path;
   }
   return null;
+}
+
+final _bundleIdPattern = RegExp(
+  r'<key>CFBundleIdentifier</key>\s*<string>([^<]*)</string>',
+);
+
+/// The bundle's `CFBundleIdentifier`, read out of its `Info.plist`, or null
+/// when it cannot be read.
+///
+/// XML only. Every editor this is asked about ships an XML plist; a binary one
+/// reads as null, which only costs that app its button.
+String? _bundleIdentifier(String appPath) {
+  try {
+    final plist = File(
+      p.join(appPath, 'Contents', 'Info.plist'),
+    ).readAsStringSync();
+    return _bundleIdPattern.firstMatch(plist)?.group(1)?.trim();
+  } on FileSystemException {
+    return null;
+  } on FormatException {
+    // A binary plist is not UTF-8.
+    return null;
+  }
 }
 
 /// Runs `[executable, ...arguments]` — an editor's own CLI, or `open` with

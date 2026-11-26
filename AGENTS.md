@@ -481,6 +481,15 @@ restart buttons. `ui/open_in_editor_buttons.dart` draws them,
   fork, and `open -a` on it was confirmed against 2.5.5: the folder opened, and
   a second call reused the running copy. **macOS only** — where the Windows
   installer puts the IDE has not been seen, so there is no Windows button.
+  Rechecked against `Antigravity.app` 2.9.1: still no document types, `argv`
+  is only scanned for a URL, and the renderer's one deep-link route is
+  `antigravity://teleport/ai_studio?blob_id=…&signature=…` (an AI Studio
+  import). There is no way to hand it a local folder.
+- **Codex is `ChatGPT.app`, bundle id `com.openai.codex`.** OpenAI folded the
+  Codex app into ChatGPT; looking for `Codex.app` found nothing, so the button
+  never showed. The bundle id is checked (`_EditorApp.bundleId`, read from the
+  XML `Info.plist`) because an older `ChatGPT.app` is the chat-only
+  `com.openai.chat`, with no `codex:` scheme. `Codex.app` is still tried.
 - **Order is preference order**, and `ProjectStartedDialog` features the first.
   OpenCode is last deliberately: it only appears when the box was ticked, but
   App Studio already runs it in the Agent tab, so an editor it does *not* have
