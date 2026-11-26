@@ -252,6 +252,7 @@ class _AppStudioAppState extends State<AppStudioApp> {
   /// The Windows menu strip, with the same handlers [MacAppMenu] is given.
   Widget _withWindowsMenu(BuildContext context, Widget? child) =>
       WindowsAppMenuBar(
+        host: currentHost,
         session: widget.session,
         process: widget.process,
         agent: widget.agent,
@@ -531,9 +532,11 @@ class _AppStudioAppState extends State<AppStudioApp> {
                   CompactWindowChannel.supportsTransparency
               ? Colors.transparent
               : null,
-          // Windows has no menu bar to add to: the menus are a strip in the
-          // window, over every screen. macOS gets `MacAppMenu` instead.
-          builder: currentHost.isWindows ? _withWindowsMenu : null,
+          // Windows and Linux have no menu bar to add to: the menus are a
+          // strip in the window, over every screen. macOS gets `MacAppMenu`.
+          builder: currentHost.isWindows || currentHost.isLinux
+              ? _withWindowsMenu
+              : null,
           home: switch (_uninstalled) {
             final result? => UninstalledScreen(result: result),
             // The teardown stops the server and the agent, which takes a

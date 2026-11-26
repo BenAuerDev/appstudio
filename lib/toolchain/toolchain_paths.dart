@@ -8,6 +8,12 @@ import '../platform/host.dart';
 /// Windows).
 const kAppSupportDirName = 'App Studio';
 
+/// Linux: the directory under `$XDG_DATA_HOME`. It is the GTK application id
+/// (`linux/CMakeLists.txt`), because `shared_preferences` already keeps the
+/// settings in a directory of that name, so App Studio's own data joins them
+/// and there is one directory to remove (specs/linux_port.md, L5).
+const kLinuxAppDataDirName = 'dev.serverpod.appstudio';
+
 /// What the directory was called before the product was renamed. Only ever
 /// deleted now — see [ToolchainPaths.legacyPaths].
 const kLegacyAppSupportDirName = 'AppStudio';
@@ -32,29 +38,52 @@ class ToolchainPaths {
     final home =
         resolvedHost.homeFrom(Platform.environment) ??
         Directory.systemTemp.path;
-    return ToolchainPaths.forHome(home, host: resolvedHost);
+    return ToolchainPaths.forHome(
+      home,
+      host: resolvedHost,
+      environment: Platform.environment,
+    );
   }
 
-  factory ToolchainPaths.forHome(String home, {HostPlatform? host}) {
+  /// [environment] is read only on Linux, for the XDG base directories.
+  factory ToolchainPaths.forHome(
+    String home, {
+    HostPlatform? host,
+    Map<String, String> environment = const {},
+  }) {
     final resolvedHost = host ?? currentHost;
+    final path = resolvedHost.path;
     return ToolchainPaths(
       home: home,
-      appSupportRoot: resolvedHost.isWindows
-          ? resolvedHost.path.join(
-              home,
-              'AppData',
-              'Roaming',
-              kAppSupportDirName,
-            )
-          : resolvedHost.path.join(
-              home,
-              'Library',
-              'Application Support',
-              kAppSupportDirName,
-            ),
+      appSupportRoot: switch (resolvedHost.os) {
+        HostOs.windows => path.join(
+          home,
+          'AppData',
+          'Roaming',
+          kAppSupportDirName,
+        ),
+        HostOs.linux => path.join(
+          _xdgDir(environment['XDG_DATA_HOME'], path) ??
+              path.join(home, '.local', 'share'),
+          kLinuxAppDataDirName,
+        ),
+        HostOs.macos => path.join(
+          home,
+          'Library',
+          'Application Support',
+          kAppSupportDirName,
+        ),
+      },
       host: resolvedHost,
     );
   }
+
+  /// An XDG base directory variable, or null when it is unset, empty or
+  /// relative — the spec says to ignore a relative one and use the default.
+  static String? _xdgDir(String? value, p.Context path) =>
+      value != null && value.isNotEmpty && path.isAbsolute(value)
+      ? value
+      : null;
 
   final String home;
 
@@ -111,14 +140,16 @@ class ToolchainPaths {
 
   /// Windows: App Studio's machine-local data — the preview's CEF cache, which
   /// the runner puts in `%LOCALAPPDATA%\App Studio\CEF` (`windows/runner/
-  /// main.cpp`). Null on macOS, where all of it is under [appSupportRoot].
+  /// main.cpp`). Null on macOS and Linux, where all of it is under
+  /// [appSupportRoot].
   String? get localDataRoot => host.isWindows
       ? _path.join(home, 'AppData', 'Local', kAppSupportDirName)
       : null;
 
   /// Windows: where `shared_preferences` keeps its file —
   /// `%APPDATA%\<CompanyName>\<ProductName>` from `windows/runner/Runner.rc`.
-  /// Null on macOS, where preferences are NSUserDefaults.
+  /// Null on macOS, where preferences are NSUserDefaults, and on Linux, where
+  /// the file is in [appSupportRoot] itself.
   String? get preferencesRoot => host.isWindows
       ? _path.join(home, 'AppData', 'Roaming', 'Serverpod', kAppSupportDirName)
       : null;

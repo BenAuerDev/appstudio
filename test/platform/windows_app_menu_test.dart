@@ -1,4 +1,5 @@
 import 'package:appstudio/agent/agent_controller.dart';
+import 'package:appstudio/platform/host_platform.dart';
 import 'package:appstudio/platform/windows_app_menu.dart';
 import 'package:appstudio/process/serverpod_process.dart';
 import 'package:appstudio/session/project_session.dart';
@@ -50,6 +51,7 @@ void main() {
     ChangeNotifier? changes,
     bool Function()? stripHidden,
     Widget child = const SizedBox.expand(),
+    HostPlatform host = HostPlatform.windows,
   }) async {
     await tester.pumpWidget(
       ShadApp(
@@ -72,6 +74,7 @@ void main() {
           onCreateRepairMigration: () {},
           changes: changes ?? ChangeNotifier(),
           stripHidden: stripHidden,
+          host: host,
           child: child,
         ),
       ),
@@ -169,6 +172,57 @@ void main() {
     await tester.pump();
     expect(find.text('File'), findsOneWidget);
     expect(counter.currentState!.count, 7);
+  });
+
+  Future<void> openMenu(WidgetTester tester, String title) async {
+    await tester.tap(find.text(title));
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('Windows quits with Exit on Alt+F4', (tester) async {
+    await pumpMenu(tester);
+
+    await openMenu(tester, 'File');
+
+    expect(find.text('Exit'), findsOneWidget);
+    expect(find.text('Alt+F4'), findsOneWidget);
+    expect(find.text('Quit'), findsNothing);
+  });
+
+  testWidgets('Linux quits with Quit on Ctrl+Q', (tester) async {
+    await pumpMenu(tester, host: HostPlatform.linux);
+
+    await openMenu(tester, 'File');
+
+    expect(find.text('Quit'), findsOneWidget);
+    expect(find.text('Ctrl+Q'), findsOneWidget);
+    expect(find.text('Exit'), findsNothing);
+  });
+
+  testWidgets('Windows offers Uninstall', (tester) async {
+    await pumpMenu(tester);
+
+    await openMenu(tester, 'Help');
+
+    expect(find.text('Uninstall App Studio...'), findsOneWidget);
+  });
+
+  testWidgets('Linux offers no Uninstall until it knows Linux\'s folders',
+      (tester) async {
+    await pumpMenu(tester, host: HostPlatform.linux);
+
+    await openMenu(tester, 'Help');
+
+    expect(find.text('About App Studio'), findsOneWidget);
+    expect(find.text('Uninstall App Studio...'), findsNothing);
+  });
+
+  testWidgets('Linux binds the same Ctrl shortcuts', (tester) async {
+    await pumpMenu(tester, host: HostPlatform.linux);
+
+    await ctrl(tester, LogicalKeyboardKey.keyN);
+
+    expect(newProjects, 1);
   });
 
   testWidgets('the shortcuts go with the menu', (tester) async {
