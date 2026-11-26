@@ -85,16 +85,38 @@ void main() {
     expect(editors.editors.single.label, 'Cursor');
   });
 
-  test('offers nothing for Antigravity, installed or not', () async {
+  test('opens Antigravity through the IDE, never the agent shell', () async {
     // `/Applications/Antigravity.app` is a shell around a language server, not
-    // the IDE — it drops a folder handed to it and `open` still exits 0.
+    // the IDE — it drops a folder handed to it and `open` still exits 0. The
+    // IDE is its own bundle and takes the folder as a document.
     final session = _FakeSession()..setPath('/p');
+    final launches = <List<String>>[];
     final editors = controller(
       session: session,
       editorsByProject: {
         '/p': {IdeIntegration.antigravity},
       },
       installedApps: {'Antigravity', 'Antigravity IDE'},
+      launches: launches,
+    );
+    addTearDown(editors.dispose);
+    await pumpEventQueue();
+
+    expect(editors.editors.single.label, 'Antigravity');
+    await editors.open(editors.editors.single);
+    expect(launches, [
+      ['/usr/bin/open', '-a', '/Applications/Antigravity IDE.app', '/p'],
+    ]);
+  });
+
+  test('offers nothing for Antigravity with only the agent shell', () async {
+    final session = _FakeSession()..setPath('/p');
+    final editors = controller(
+      session: session,
+      editorsByProject: {
+        '/p': {IdeIntegration.antigravity},
+      },
+      installedApps: {'Antigravity'},
     );
     addTearDown(editors.dispose);
     await pumpEventQueue();

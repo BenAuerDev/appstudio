@@ -32,12 +32,14 @@ void main() {
   late MacAppMenu menu;
   var migrations = 0;
   var newProjects = 0;
+  late List<Uri> opened;
 
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
     calls = [];
     migrations = 0;
     newProjects = 0;
+    opened = [];
     // Tests run as Android, where the plugin picks its no-op implementation.
     MacMenuBarPlatform.instance = MethodChannelMacMenuBar();
     messenger.setMockMethodCallHandler(channel, (call) async {
@@ -72,6 +74,7 @@ void main() {
       onCreateAndApplyMigrations: () => migrations++,
       onCreateRepairMigration: () {},
       logView: logView,
+      openLink: (url) async => opened.add(url),
     );
     await menu.install();
   });
@@ -100,6 +103,15 @@ void main() {
         (a) => a['itemId'] == itemId || a['submenuId'] == itemId,
         orElse: () => fail('$itemId was never added'),
       );
+
+  test('Help opens the prompt generator', () async {
+    final item = added('help_prompt_generator');
+    expect(item['menuId'], 'Help');
+    expect(item['title'], 'Open Prompt Generator');
+
+    await click('help_prompt_generator');
+    expect(opened, [Uri.parse('https://serverpod.dev/start-prompt')]);
+  });
 
   test('Server and Logs sit between View and Window', () {
     expect(added('server')['title'], 'Server');

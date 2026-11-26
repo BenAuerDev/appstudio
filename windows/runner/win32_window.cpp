@@ -53,6 +53,15 @@ void EnableFullDpiSupportIfAvailable(HWND hwnd) {
   FreeLibrary(user32_module);
 }
 
+// Loads the app icon's frame for |size| px. LoadIcon only ever returns the
+// SM_CXICON frame at the system DPI, which Windows then rescales for the title
+// bar and Alt+Tab; LoadImage picks the frame drawn for that size.
+HICON LoadAppIcon(int size) {
+  return static_cast<HICON>(LoadImage(GetModuleHandle(nullptr),
+                                      MAKEINTRESOURCE(IDI_APP_ICON), IMAGE_ICON,
+                                      size, size, LR_DEFAULTCOLOR));
+}
+
 }  // namespace
 
 // Manages the Win32Window's window class registration.
@@ -145,6 +154,7 @@ bool Win32Window::Create(const std::wstring& title,
   }
 
   UpdateTheme(window);
+  UpdateIcons(dpi);
 
   return OnCreate();
 }
@@ -194,6 +204,7 @@ Win32Window::MessageHandler(HWND hwnd,
 
       SetWindowPos(hwnd, nullptr, newRectSize->left, newRectSize->top, newWidth,
                    newHeight, SWP_NOZORDER | SWP_NOACTIVATE);
+      UpdateIcons(HIWORD(wparam));
 
       return 0;
     }
@@ -227,6 +238,14 @@ void Win32Window::Destroy() {
   if (window_handle_) {
     DestroyWindow(window_handle_);
     window_handle_ = nullptr;
+  }
+  if (small_icon_) {
+    DestroyIcon(small_icon_);
+    small_icon_ = nullptr;
+  }
+  if (big_icon_) {
+    DestroyIcon(big_icon_);
+    big_icon_ = nullptr;
   }
   if (g_active_window_count == 0) {
     WindowClassRegistrar::GetInstance()->UnregisterWindowClass();
@@ -270,6 +289,27 @@ bool Win32Window::OnCreate() {
 
 void Win32Window::OnDestroy() {
   // No-op; provided for subclasses.
+}
+
+void Win32Window::UpdateIcons(UINT dpi) {
+  if (!window_handle_) {
+    return;
+  }
+  // SM_CXSMICON and SM_CXICON at |dpi|: 16 and 32 px at 100%.
+  HICON small_icon = LoadAppIcon(MulDiv(16, static_cast<int>(dpi), 96));
+  HICON big_icon = LoadAppIcon(MulDiv(32, static_cast<int>(dpi), 96));
+  SendMessage(window_handle_, WM_SETICON, ICON_SMALL,
+              reinterpret_cast<LPARAM>(small_icon));
+  SendMessage(window_handle_, WM_SETICON, ICON_BIG,
+              reinterpret_cast<LPARAM>(big_icon));
+  if (small_icon_) {
+    DestroyIcon(small_icon_);
+  }
+  if (big_icon_) {
+    DestroyIcon(big_icon_);
+  }
+  small_icon_ = small_icon;
+  big_icon_ = big_icon;
 }
 
 void Win32Window::UpdateTheme(HWND const window) {

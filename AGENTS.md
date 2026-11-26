@@ -457,8 +457,8 @@ restart buttons. `ui/open_in_editor_buttons.dart` draws them,
   absent one.
 - **Most of it goes through `open`**, which hands the request to LaunchServices
   and so routes it to the copy that is *already running*. Three forms:
-  - **The folder as a document** — `open -a <bundle> <path>`, for VS Code,
-    which declares `public.folder` in `CFBundleDocumentTypes`.
+  - **The folder as a document** — `open -a <bundle> <path>`, for VS Code and
+    Antigravity, which declare `public.folder` in `CFBundleDocumentTypes`.
   - **A deep link** — `open <scheme>://…`, for Claude
     (`claude://code/new?folder=`), Codex (`codex://threads/new?path=`) and
     OpenCode (`opencode://open-project?directory=`). None of the three takes a
@@ -474,13 +474,13 @@ restart buttons. `ui/open_in_editor_buttons.dart` draws them,
   is why the deep link is preferred over handing it the folder as a document.
   No `q`/`prompt` is sent: that would prefill *and* start a task, and the
   button only promises to open the project.
-- **Antigravity is the one `IdeIntegration` with no button.**
-  `/Applications/Antigravity.app` is not the IDE — it is a thin Electron shell
-  around a Go language server, with no `open-file` handler and no
-  `CFBundleDocumentTypes`, so a folder handed to it is dropped. The editor is a
-  separate bundle, `Antigravity IDE.app`, and no route into it has been
-  confirmed. It is out only because no build of it has been seen to open the
-  folder it was given.
+- **Antigravity opens through `Antigravity IDE.app`, never `Antigravity.app`.**
+  The latter is a thin Electron shell around a Go language server, with no
+  `open-file` handler and no `CFBundleDocumentTypes`, so a folder handed to it
+  is dropped and `open` still exits 0. The IDE is a separate bundle, a VS Code
+  fork, and `open -a` on it was confirmed against 2.5.5: the folder opened, and
+  a second call reused the running copy. **macOS only** — where the Windows
+  installer puts the IDE has not been seen, so there is no Windows button.
 - **Order is preference order**, and `ProjectStartedDialog` features the first.
   OpenCode is last deliberately: it only appears when the box was ticked, but
   App Studio already runs it in the Agent tab, so an editor it does *not* have
@@ -1247,6 +1247,8 @@ install. Sparkle would also catch it, but later and less clearly.
 - **Custom widgets read the theme; they do not carry colors.** Use `scheme.*` for color, `theme.radii.{sm,md,lg,full}` for corners and `theme.style.*` for geometry — a literal `Color(0x…)` or `BorderRadius.circular(n)` in a widget is the thing to fix, not to match. Failure states are `scheme.destructive`, never a private red.
 - **Success and warning have no shadcn token**, so they ride in the scheme's `custom` map and are read through the `AppColorScheme` extension as `scheme.success` / `scheme.warning`. One value per status, picked to be legible on that brightness's background, covers both the dot and its label.
 - **The app icon is `AppIcon.appiconset` on macOS and `windows/runner/resources/app_icon.ico` on Windows** — separate artwork, each from the design's icon set, so neither is generated from the other. `ASSETCATALOG_COMPILER_APPICON_NAME` must name `AppIcon`: an Icon Composer `AppStudio.icon` used to be the one built, which left the asset catalog's PNGs unused, so replacing them changed nothing. macOS 27 draws the flat icon as is, with no grey frame (checked through `NSWorkspace.icon(forFile:)`). After changing the icon, a dev build keeps showing the old one even through `flutter clean` and a Dock restart: macOS caches it per bundle path and a rebuild does not invalidate that. `touch` the built `.app`, then `lsregister -f` it, and relaunch.
+  - **The Windows `.ico` runs nearly edge to edge, unlike the macOS one.** The design set's own `app_icon.ico` is drawn on Apple's grid: an 800 px plate in a 1024 px canvas with a drop shadow, so on the taskbar it looked a fifth smaller than every other app. It also had no 30, 36, 60, 72 or 80 px frames, so at 125% and 150% scale Windows shrank a larger frame to fit. Build it from the set's `source/windows.svg` instead: drop `filter="url(#wsx)"` (the outer shadow) and crop the viewBox to the plate (`112 112 800 800`). Then render each frame with `rsvg-convert` at the frame size minus a margin of 1/32 of the frame (1 px through 40, 8 px at 256), and centre it on a transparent canvas. Use 16, 20, 24, 30, 32, 36, 40, 48, 60, 64, 72, 80, 96, 128 and 256 px, stored as PNG entries. `rsvg-convert` reproduces the set's 256 px frame almost exactly.
+  - **The runner sets the window icons per DPI** (`Win32Window::UpdateIcons`). `LoadIcon` returns only the 32 px frame at the system DPI, so the title bar and Alt+Tab icons were rescaled from it. The runner now sends `WM_SETICON` with the frame for 16 and 32 px at the window's DPI, and again on `WM_DPICHANGED`. The Start menu shortcut and the pinned taskbar icon come from the exe's resource, which the shell reads at the size it needs.
 - **Layout constants** (`app_theme.dart`): `kPaneHeaderHeight` (36), `kDividerWidth` (1), `paneBorderSide()`, `kSplitHandleWidth` (6).
 - **Pane chrome:** headers use `scheme.muted`; content uses `scheme.background`. Use `paneBorderSide()` for all 1px dividers.
 - **Segmented controls:** `IconSegmentedControl` / `TextSegmentedControl` share `widgets/segmented_control_theme.dart`, which resolves color and geometry from the theme's **tab** tokens — the strip/segment treatment `ShadTabs` uses — so both follow the style preset like a built-in. Hover moves the *foreground*, not the fill, so no blend has to be invented. `onMutedSurface: true` on muted pane headers swaps track and selection.
@@ -1937,6 +1939,14 @@ after the other.
 - Its second paragraph ("When the app has started, open this project in your AI
   editor…") is gone: that is the whole job of the notice that now follows it,
   and saying it during a two-minute compile is advice the user cannot act on.
+  What it says instead is something the user *can* do while waiting: write
+  down what they want to build, and a **Prompt Generator** button left of
+  Dismiss opens `kPromptGeneratorUrl` (`serverpod.dev/start-prompt`,
+  `util/prompt_generator.dart`) in the browser. It leaves the notice up — the
+  wait is not over. The two buttons share a `Row`: three children under
+  `spaceBetween` would strand the first mid-row. **Help → Open Prompt
+  Generator** opens the same page, on both platforms; on macOS it is added to
+  the stock Help menu by title, as View is.
 - **The started notice names one editor and offers one button** —
   `featuredEditor`, the first of `ExternalEditorsView.editors`. A row of equally
   weighted buttons is a decision; this is a next step. The toolbar carries the

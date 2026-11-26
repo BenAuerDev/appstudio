@@ -12,6 +12,8 @@ import '../session/project_session.dart';
 import '../theme/theme_controller.dart';
 import '../ui/server_log/log_view_controller.dart';
 import '../ui/server_log/server_log_view.dart';
+import '../util/open_url.dart';
+import '../util/prompt_generator.dart';
 
 /// The Windows counterpart of [MacAppMenu]: the same commands with the same
 /// rules for when each is live, as a menu strip across the top of the window
@@ -459,6 +461,11 @@ class _WindowsAppMenuBarState extends State<WindowsAppMenuBar> {
     final canCheck = widget.canCheckForUpdates();
     final reason = widget.updatesUnavailableReason();
     return [
+      _item(
+        'Open Prompt Generator',
+        onPressed: () => unawaited(openUrl(kPromptGeneratorUrl)),
+      ),
+      _divider,
       _item(
         reason == null ? 'Check for Updates...' : 'Check for Updates ($reason)',
         enabled: canCheck,

@@ -54,11 +54,12 @@ void main() {
 
     expect(find.byType(ProjectStartupDialog), findsOneWidget);
     expect(find.textContaining('minute or two'), findsOneWidget);
+    expect(find.text('Prompt Generator'), findsOneWidget);
   });
 
   testWidgets('dismissing alone does not silence it', (tester) async {
     await pumpAndOpen(tester);
-    await tester.tap(find.text("Let's Go"));
+    await tester.tap(find.text('Dismiss'));
     await tester.pumpAndSettle();
 
     expect(find.byType(ProjectStartupDialog), findsNothing);
@@ -70,7 +71,7 @@ void main() {
     await pumpAndOpen(tester);
     await tester.tap(find.byType(ShadCheckbox));
     await tester.pumpAndSettle();
-    await tester.tap(find.text("Let's Go"));
+    await tester.tap(find.text('Dismiss'));
     await tester.pumpAndSettle();
 
     final prefs = await SharedPreferences.getInstance();
@@ -100,6 +101,26 @@ void main() {
 
     final prefs = await SharedPreferences.getInstance();
     expect(prefs.getBool('project.startup_notice_dismissed'), isTrue);
+  });
+
+  testWidgets('the Prompt Generator opens in the browser and leaves the notice '
+      'up', (tester) async {
+    final opened = <Uri>[];
+    await tester.pumpWidget(
+      ShadApp(
+        theme: buildLightTheme(),
+        home: ProjectStartupDialog(
+          process: _FakeProcess(),
+          openLink: (url) async => opened.add(url),
+        ),
+      ),
+    );
+    await tester.tap(find.text('Prompt Generator'));
+    await tester.pumpAndSettle();
+
+    expect(opened, [Uri.parse('https://serverpod.dev/start-prompt')]);
+    // The wait is not over, so the notice stays until the project is up.
+    expect(find.byType(ProjectStartupDialog), findsOneWidget);
   });
 
   testWidgets('stays silent once dismissed', (tester) async {

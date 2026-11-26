@@ -1,9 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:shad/shad.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../process/project_ready_view.dart';
 import '../theme/app_theme.dart';
+import '../util/open_url.dart';
+import '../util/prompt_generator.dart';
 import '../widgets/app_dialog.dart';
 import '../widgets/dialog_body.dart';
 
@@ -45,9 +49,17 @@ Future<void> maybeShowProjectStartupNotice(
 /// caller's job, which keeps this widget free of `dart:io` and easy to show in
 /// Widgetbook.
 class ProjectStartupDialog extends StatefulWidget {
-  const ProjectStartupDialog({super.key, required this.process});
+  const ProjectStartupDialog({
+    super.key,
+    required this.process,
+    this.openLink = openUrl,
+  });
 
   final ProjectReadyView process;
+
+  /// Opens the Prompt Generator in the user's browser. Injectable so a test
+  /// can press the button without a browser opening.
+  final Future<void> Function(Uri url) openLink;
 
   @override
   State<ProjectStartupDialog> createState() => _ProjectStartupDialogState();
@@ -85,28 +97,57 @@ class _ProjectStartupDialogState extends State<ProjectStartupDialog> {
   Widget build(BuildContext context) {
     // The alert variant, not the primary one: its theme carries no
     // `closeIconData`, so there is no X in the corner — which is right for a
-    // notice you acknowledge rather than dismiss. Nothing here is styled by
-    // hand; the copy goes in `description` so it picks up shad's body role
-    // (`style.body` over `textTheme.muted`) instead of a label style.
+    // notice you acknowledge rather than dismiss. The copy goes in
+    // `description` so it picks up shad's body role (`style.body` over
+    // `textTheme.muted`) instead of a label style.
     return ShadDialog.alert(
       title: const Text('Starting your project'),
-      description: const Text(
-        'App Studio is compiling your server and app, then starting them '
-        'up. The first run takes a minute or two.',
+      description: const Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        spacing: 8,
+        children: [
+          Text(
+            'App Studio is building your server and app and starting them '
+            'up. The first run takes a minute or two.',
+          ),
+          Text(
+            'While you wait, write down what you want to build. The Prompt '
+            'Generator turns it into a prompt for your AI editor.',
+          ),
+        ],
       ),
       // The row defaults to `min`/`end`, which would park the checkbox next to
       // the button; `max` is what lets `spaceBetween` push them apart.
       actionsMainAxisSize: MainAxisSize.max,
       actionsMainAxisAlignment: MainAxisAlignment.spaceBetween,
       actions: [
-        ShadCheckbox(
-          value: _dontShowAgain,
-          onChanged: (v) => setState(() => _dontShowAgain = v),
-          label: Text("Don't show this again", style: kWeightMedium),
+        // Flexible, as in the started notice: with two buttons beside it the
+        // row can run out of room, and the checkbox is the part that can wrap.
+        Flexible(
+          child: ShadCheckbox(
+            value: _dontShowAgain,
+            onChanged: (v) => setState(() => _dontShowAgain = v),
+            label: Text("Don't show this again", style: kWeightMedium),
+          ),
         ),
-        ShadButton(
-          onPressed: () => Navigator.of(context).pop(_dontShowAgain),
-          child: const Text("Let's Go"),
+        // The two buttons travel together: three children under
+        // `spaceBetween` would strand the first one mid-row.
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          spacing: 8,
+          children: [
+            // Opens the browser and leaves the notice up: the wait it describes
+            // is not over, and it still closes itself when the project starts.
+            ShadButton.outline(
+              onPressed: () => unawaited(widget.openLink(kPromptGeneratorUrl)),
+              trailing: const Icon(LucideIcons.arrowUpRight, size: 16),
+              child: const Text('Prompt Generator'),
+            ),
+            ShadButton(
+              onPressed: () => Navigator.of(context).pop(_dontShowAgain),
+              child: const Text('Dismiss'),
+            ),
+          ],
         ),
       ],
       child: const DialogBody(),
