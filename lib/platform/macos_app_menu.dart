@@ -12,6 +12,8 @@ import '../session/project_session.dart';
 import '../theme/theme_controller.dart';
 import '../ui/server_log/log_view_controller.dart';
 import '../ui/server_log/server_log_view.dart';
+import '../util/open_url.dart';
+import '../util/prompt_generator.dart';
 
 /// Adds custom menus to the native macOS menu bar while preserving the
 /// standard items from MainMenu.xib.
@@ -32,6 +34,7 @@ class MacAppMenu {
     required this.onCreateAndApplyMigrations,
     required this.onCreateRepairMigration,
     required this.logView,
+    this.openLink = openUrl,
   }) {
     session.addListener(_sync);
     themeController.addListener(_sync);
@@ -82,6 +85,9 @@ class MacAppMenu {
   static const _logsLevelMenuId = 'logs_level';
   static const _logsAppPrefix = 'logs_source_app_';
   static const _logsLevelPrefix = 'logs_level_';
+  static const _helpMenuId = 'Help';
+  static const _promptGeneratorId = 'help_prompt_generator';
+  static const _promptGeneratorIcon = 'sparkles';
 
   final ProjectSession session;
   final ServerpodProcessController process;
@@ -124,6 +130,10 @@ class MacAppMenu {
   /// The log panel's visibility, selected log and level — what the Logs menu
   /// sets, and what its checkmarks follow.
   final LogViewController logView;
+
+  /// Opens a web page in the user's browser. Injectable so a test can see what
+  /// Help → Open Prompt Generator asked for without a browser opening.
+  final Future<void> Function(Uri url) openLink;
 
   /// The Flutter apps the Logs menu lists, by item id, in the runner's order.
   /// Rebuilt only when the runner's app list changes: the log notifies on
@@ -170,6 +180,7 @@ class MacAppMenu {
     await _installViewMenu();
     await _installServerMenu();
     await _installLogsMenu();
+    await _installHelpMenu();
     await _installAppMenuItems();
 
     _installed = true;
@@ -276,6 +287,22 @@ class MacAppMenu {
       _autoUpdatesId,
       automaticUpdatesEnabled(),
     );
+  }
+
+  /// Help → Open Prompt Generator, at the top of the stock Help menu.
+  ///
+  /// The menu comes from MainMenu.xib and is addressed by its title, as View
+  /// is. macOS puts its own search field above the items; that is not an item
+  /// and does not move the index.
+  Future<void> _installHelpMenu() async {
+    final added = await MacMenuBar.addMenuItem(
+      menuId: _helpMenuId,
+      itemId: _promptGeneratorId,
+      title: 'Open Prompt Generator',
+      index: 0,
+      systemImage: _promptGeneratorIcon,
+    );
+    if (!added) debugPrint('MacAppMenu: could not reach the Help menu');
   }
 
   Future<void> _installFileMenu() async {
@@ -619,6 +646,8 @@ class MacAppMenu {
         onCheckForUpdates();
       case _uninstallId:
         onUninstall();
+      case _promptGeneratorId:
+        unawaited(openLink(kPromptGeneratorUrl));
       case _autoUpdatesId:
         // Sparkle owns the value; toggle it and let the sync reflect whatever
         // it actually became.

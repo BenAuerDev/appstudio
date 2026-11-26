@@ -74,16 +74,17 @@ class _EditorCli {
 /// that takes a project directory. A CLI does not qualify — there is no window
 /// to open a folder in, and "open in …" has to mean something visible.
 ///
-/// **Antigravity is the one absence.** `/Applications/Antigravity.app` is not
-/// the IDE: it is a thin Electron shell around a Go language server, with no
-/// `open-file` handler and no `CFBundleDocumentTypes`, so a folder handed to it
-/// is dropped and `open` still exits 0. The editor is a separate bundle,
-/// `Antigravity IDE.app`, and no route into it has been confirmed. It is left
-/// out only because no build of it has been seen to open the folder it was
-/// given.
+/// **Antigravity is `Antigravity IDE.app`, not `Antigravity.app`.** The latter
+/// is a thin Electron shell around a Go language server, with no `open-file`
+/// handler and no `CFBundleDocumentTypes`, so a folder handed to it is dropped
+/// and `open` still exits 0. The IDE is a VS Code fork that declares
+/// `public.folder`, so it takes the folder as a document like VS Code does.
+/// Verified against Antigravity IDE 2.5.5: `open -a` opened the folder, and a
+/// second call reused the running copy and opened the next folder beside it.
 const _editorApps = <IdeIntegration, _EditorApp>{
   IdeIntegration.cursor: _EditorApp('Cursor', cli: _cursorCli),
   IdeIntegration.vscode: _EditorApp('Visual Studio Code'),
+  IdeIntegration.antigravity: _EditorApp('Antigravity IDE'),
   IdeIntegration.claude: _EditorApp('Claude', deepLink: _claudeDeepLink),
   IdeIntegration.codex: _EditorApp('Codex', deepLink: _codexDeepLink),
   IdeIntegration.opencode: _EditorApp('OpenCode', deepLink: _openCodeDeepLink),
@@ -185,6 +186,9 @@ final class _WindowsLink extends _WindowsEditor {
   final Uri Function(String projectPath) link;
 }
 
+/// Antigravity is macOS-only for now: where its Windows installer puts the IDE
+/// has not been seen, and the `antigravity` scheme belongs to the agent shell,
+/// not the editor.
 const _windowsEditors = <IdeIntegration, _WindowsEditor>{
   IdeIntegration.cursor: _WindowsCli(userDir: 'cursor', exe: 'Cursor.exe'),
   IdeIntegration.vscode: _WindowsCli(
