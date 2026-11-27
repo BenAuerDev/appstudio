@@ -182,11 +182,125 @@ X-AppImage-Version=$version
 DESKTOP
 ln -s "usr/share/applications/$app_id.desktop" "$appdir/$app_id.desktop"
 
+step "Start script"
+# A system that cannot load the bundle (a glibc or C++ runtime too old, or a
+# system library missing) fails before any of App Studio runs, so a
+# double-click does nothing visible. AppRun asks the loader first and says
+# what is wrong. Its message names a glibc version and distributions that
+# have it: the version is the highest GLIBC_ version any ELF file in the
+# bundle references, read from the build so it cannot drift, and a build that
+# needs another one stops here until the distributions are updated. They go
+# into a shell string, so they are limited to plain characters.
+glibc_expected=2.38
+glibc_examples="Ubuntu 24.04, Fedora 39, Debian 13 or newer"
+if [[ ! "$glibc_examples" =~ ^[A-Za-z0-9\ .,]+$ ]]; then
+  echo "glibc_examples may hold letters, digits, spaces, dots and commas only." >&2
+  exit 1
+fi
+glibc_versions=()
+while IFS= read -r -d '' file; do
+  # ELF files by their header, not their name: chrome-sandbox has no .so.
+  # NUL bytes are dropped first, as bash warns about them in $(...); the ELF
+  # header has none.
+  [[ "$(head -c 4 "$file" | tr -d '\0')" == $'\x7fELF' ]] || continue
+  # In the main shell, so a readelf that fails stops the build.
+  syms="$(readelf --dyn-syms -W "$file")"
+  for v in $(grep -o 'GLIBC_[0-9][0-9.]*' <<< "$syms" || true); do
+    glibc_versions+=("${v#GLIBC_}")
+  done
+done < <(find "$appdir/usr/lib/appstudio" -path "$appdir/usr/lib/appstudio/data" -prune \
+  -o -type f -print0)
+glibc_required="$(printf '%s\n' "${glibc_versions[@]}" | sort -V -u | tail -n 1)"
+if [[ "$glibc_required" != "$glibc_expected" ]]; then
+  echo "The bundle needs glibc ${glibc_required:-(none found)}, not $glibc_expected." >&2
+  echo "Update glibc_expected and glibc_examples in $0." >&2
+  exit 1
+fi
+
 cat > "$appdir/AppRun" <<'APPRUN'
 #!/bin/sh
+# Starts App Studio from the mounted image. On a system that cannot load it,
+# the executable fails before any of App Studio runs and a double-click does
+# nothing visible, so this asks the loader first and says what is wrong.
 here="$(dirname "$(readlink -f "$0")")"
-exec "$here/usr/lib/appstudio/appstudio" "$@"
+app="$here/usr/lib/appstudio/appstudio"
+required="@GLIBC_REQUIRED@"
+examples="@GLIBC_EXAMPLES@"
+
+# Joins the non-empty lines on stdin with ", ".
+join() {
+  joined=""
+  while IFS= read -r line; do
+    [ -n "$line" ] && joined="${joined:+$joined, }$line"
+  done
+  printf '%s' "$joined"
+}
+
+# Shows title $1 and text $2 through the first tool that manages to. Exit 1
+# with nothing on stderr is a dialog the user closed; any other failure, such
+# as a display the tool cannot open, hands over to the next tool.
+show_window() {
+  for tool in zenity kdialog notify-send; do
+    command -v "$tool" > /dev/null 2>&1 || continue
+    case "$tool" in
+      zenity) err="$(zenity --error --no-markup --title="$1" --text="$2" 2>&1 > /dev/null)" ;;
+      kdialog) err="$(kdialog --title "$1" --error "$2" 2>&1 > /dev/null)" ;;
+      notify-send) err="$(notify-send "$1" "$2" 2>&1 > /dev/null)" ;;
+    esac
+    status=$?
+    if [ "$status" -eq 0 ] || { [ "$status" -eq 1 ] && [ -z "$err" ]; }; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+# "glibc 2.39"; "none" where getconf exists but knows no glibc (musl); empty
+# where there is no getconf, which then does not count against the system.
+glibc=""
+if command -v getconf > /dev/null 2>&1; then
+  glibc="$(getconf GNU_LIBC_VERSION 2> /dev/null)"
+  case "$glibc" in
+    "glibc "[0-9]*) ;;
+    *) glibc="none" ;;
+  esac
+fi
+
+if [ "$glibc" != none ]; then
+  # The loader lists what the app needs without running it, and says
+  # "not found" for each library or symbol version this system lacks.
+  trace="$(LD_TRACE_LOADED_OBJECTS=1 "$app" 2>&1)"
+  missing_versions="$(printf '%s\n' "$trace" |
+    sed -n "s/.*version [\`']\([^']*\)' not found.*/\1/p" | sort -u | join)"
+  missing_libs="$(printf '%s\n' "$trace" |
+    sed -n 's/^[[:space:]]*\([^[:space:]]*\) => not found.*/\1/p' | sort -u | join)"
+  # Nothing recognisably missing: start, and let any other failure speak.
+  if [ -z "$missing_versions$missing_libs" ]; then
+    exec "$app" "$@"
+  fi
+fi
+
+if [ "$glibc" = none ]; then
+  title="App Studio needs a Linux with glibc"
+  text="App Studio needs glibc $required or later ($examples). This system has no glibc."
+elif [ -n "$missing_versions" ]; then
+  title="App Studio needs a newer Linux"
+  # Libraries missing as well are left out: a newer Linux is the fix either
+  # way, and on an old system the list runs to dozens.
+  text="App Studio needs glibc $required or later ($examples). This system ${glibc:+has $glibc and }lacks $missing_versions."
+else
+  title="App Studio is missing system libraries"
+  text="App Studio needs these libraries, which this system does not have: $missing_libs. Install them with your distribution's package manager."
+fi
+printf '%s\n' "$text" >&2
+# Started from a launcher, nobody reads stderr: show a window as well.
+if [ -n "$WAYLAND_DISPLAY$DISPLAY" ]; then
+  show_window "$title" "$text"
+fi
+exit 1
 APPRUN
+sed -i -e "s/@GLIBC_REQUIRED@/$glibc_required/" \
+  -e "s/@GLIBC_EXAMPLES@/$glibc_examples/" "$appdir/AppRun"
 chmod +x "$appdir/AppRun"
 
 # --- AppImage --------------------------------------------------------------
