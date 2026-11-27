@@ -163,6 +163,8 @@ ln -s "$app_id.png" "$appdir/.DirIcon"
 # StartupWMClass is the GTK application id the runner sets (APPLICATION_ID in
 # linux/CMakeLists.txt): it is how a dock matches the window to this entry.
 # X-AppImage-Version is the version AppImage managers such as Gear Lever show.
+# Launchers match the start of each word of Name, so "appstudio" would find
+# nothing without Keywords.
 mkdir -p "$appdir/usr/share/applications"
 cat > "$appdir/usr/share/applications/$app_id.desktop" <<DESKTOP
 [Desktop Entry]
@@ -175,6 +177,7 @@ Terminal=false
 StartupNotify=true
 StartupWMClass=$app_id
 Categories=Development;IDE;
+Keywords=appstudio;serverpod;flutter;dart;
 X-AppImage-Version=$version
 DESKTOP
 ln -s "usr/share/applications/$app_id.desktop" "$appdir/$app_id.desktop"
