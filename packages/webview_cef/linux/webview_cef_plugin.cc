@@ -61,20 +61,30 @@ public:
     textureId = (int64_t)texture;
   }
 
+  // Runs wherever the last reference goes: usually GTK's thread, but CEF's
+  // when a close lands while a frame is being copied (the paint holds its
+  // own reference). Flutter unregisters textures on GTK's thread, and the
+  // texture's GL cleanup needs its context there, so the work is handed over.
   virtual ~WebviewTextureRenderer()
   {
-    fl_texture_registrar_unregister_texture(register_, FL_TEXTURE(texture));
+    FlTextureRegistrar *registrar = register_;
+    WebviewCefTexture *texture_to_free = texture;
+    on_main_thread([registrar, texture_to_free]() {
+      fl_texture_registrar_unregister_texture(registrar,
+                                              FL_TEXTURE(texture_to_free));
+      // The registrar holds its own reference while registered; this drops
+      // ours, so the texture and its buffers are freed once Flutter lets go.
+      g_object_unref(texture_to_free);
+    });
     register_ = nullptr;
   }
 
+  // Called on CEF's thread. The texture copies the frame under its lock; see
+  // webview_cef_texture.h for why it is double-buffered.
   virtual void onFrame(const void *buffer, int32_t width, int32_t height) override
   {
-    texture->width = width;
-    texture->height = height;
-    const auto size = width * height * 4;
-    delete texture->buffer;
-    texture->buffer = new uint8_t[size];
-    webview_cef::SwapBufferFromBgraToRgba((void *)texture->buffer, buffer, width, height);
+    webview_cef_texture_set_frame(texture, buffer, width, height,
+                                  webview_cef::SwapBufferFromBgraToRgba);
     fl_texture_registrar_mark_texture_frame_available(register_, FL_TEXTURE(texture));
   }
   FlTextureRegistrar *register_;
