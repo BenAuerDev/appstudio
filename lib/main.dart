@@ -142,6 +142,9 @@ class AppStudioApp extends StatefulWidget {
   State<AppStudioApp> createState() => _AppStudioAppState();
 }
 
+/// How long a second exit request on Linux waits for the running teardown.
+const _kLinuxExitWait = Duration(seconds: 15);
+
 class _AppStudioAppState extends State<AppStudioApp> {
   /// The menu bar lives above [ShadApp], so dialogs it opens need the app's
   /// own navigator context.
@@ -163,6 +166,9 @@ class _AppStudioAppState extends State<AppStudioApp> {
   /// this is the fix.
   AppLifecycleListener? _lifecycle;
   bool _exiting = false;
+
+  /// The exit teardown in progress, for a second exit request on Linux.
+  Future<AppExitResponse>? _exitTeardown;
 
   /// The project the startup notice last fired for.
   ///
@@ -228,7 +234,28 @@ class _AppStudioAppState extends State<AppStudioApp> {
   /// unquittable, which is a far worse bug than a stray child process. The
   /// timeout is shorter than the one `dispose()` uses because the user is
   /// watching a quit here, not a relaunch.
-  Future<AppExitResponse> _onExitRequested() async {
+  ///
+  /// A second request while the teardown runs is answered at once on macOS
+  /// and Windows (Windows drops a second close before it gets here, in
+  /// `window_close.dart`). On Linux every route ends here — the close button,
+  /// the window manager's close, File → Quit and Ctrl+Q — and answering "exit"
+  /// at once quit the app mid-teardown, before the server was stopped. There
+  /// it waits for the teardown instead, but at most [_kLinuxExitWait]: the CEF
+  /// quit inside it has no timeout of its own, and a teardown that hangs must
+  /// not make the app impossible to close.
+  Future<AppExitResponse> _onExitRequested() {
+    final running = _exitTeardown;
+    if (running != null) {
+      if (!currentHost.isLinux) return Future.value(AppExitResponse.exit);
+      return running.timeout(
+        _kLinuxExitWait,
+        onTimeout: () => AppExitResponse.exit,
+      );
+    }
+    return _exitTeardown = _runExitTeardown();
+  }
+
+  Future<AppExitResponse> _runExitTeardown() async {
     if (_exiting) return AppExitResponse.exit;
     _exiting = true;
     try {
