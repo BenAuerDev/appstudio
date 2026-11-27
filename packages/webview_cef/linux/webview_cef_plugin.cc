@@ -5,6 +5,7 @@
 #include <sys/utsname.h>
 
 #include <cstring>
+#include <functional>
 #include <unordered_map>
 #include <webview_plugin.h>
 #include "webview_cef_keyevent.h"
@@ -25,6 +26,29 @@ struct _WebviewCefPlugin
 G_DEFINE_TYPE(WebviewCefPlugin, webview_cef_plugin, g_object_get_type())
 
 std::unordered_map<int64_t, std::shared_ptr<webview_cef::WebviewPlugin>> webviewPlugins;
+
+// Runs [fn] on GTK's main thread: at once when already on it, otherwise as
+// soon as the main loop gets to it.
+//
+// CEF runs its own message loop thread on Linux (multi_threaded_message_loop),
+// so its callbacks — a script's result, a page event — arrive there. Flutter's
+// Linux engine takes method channel calls and responses on the main thread
+// only; from CEF's thread they were lost, so evaluateJavascript never
+// answered and App Studio's preview waited on it forever. Windows does the
+// same hop with PostMessage.
+static void on_main_thread(std::function<void()> fn)
+{
+  g_main_context_invoke_full(
+      nullptr, G_PRIORITY_DEFAULT,
+      [](gpointer data) -> gboolean
+      {
+        (*static_cast<std::function<void()> *>(data))();
+        return G_SOURCE_REMOVE;
+      },
+      new std::function<void()>(std::move(fn)),
+      [](gpointer data)
+      { delete static_cast<std::function<void()> *>(data); });
+}
 
 class WebviewTextureRenderer : public webview_cef::WebviewTexture
 {
@@ -216,16 +240,25 @@ static void webview_cef_plugin_handle_method_call(
   WValue *encodeArgs = encode_flvalue_to_wvalue(fl_method_call_get_args(method_call));
   g_object_ref(method_call);
   self->m_plugin->HandleMethodCall(method, encodeArgs, [=](int ret, WValue *responseArgs){
-    if (ret > 0){
-      fl_method_call_respond_success(method_call, encode_wavlue_to_flvalue(responseArgs), nullptr);
-    }
-    else if (ret < 0){
-      fl_method_call_respond_error(method_call, "error", "error", encode_wavlue_to_flvalue(responseArgs), nullptr);
-    }
-    else{
-      fl_method_call_respond_not_implemented(method_call, nullptr);
-    }
-    g_object_unref(method_call); 
+    // Encoded here, on whichever thread answers: responseArgs belongs to the
+    // caller and is gone once this returns.
+    FlValue *response =
+        ret == 0 ? nullptr : encode_wavlue_to_flvalue(responseArgs);
+    on_main_thread([=]() {
+      if (ret > 0){
+        fl_method_call_respond_success(method_call, response, nullptr);
+      }
+      else if (ret < 0){
+        fl_method_call_respond_error(method_call, "error", "error", response, nullptr);
+      }
+      else{
+        fl_method_call_respond_not_implemented(method_call, nullptr);
+      }
+      if (response != nullptr){
+        fl_value_unref(response);
+      }
+      g_object_unref(method_call);
+    });
   });
   webview_value_unref(encodeArgs);
 }
@@ -275,10 +308,15 @@ void webview_cef_plugin_register_with_registrar(FlPluginRegistrar *registrar)
                                             g_object_ref(plugin),
                                             g_object_unref);
 
+  // Kept for the plugin's lifetime: events are sent on it long after this
+  // function's g_autoptr has dropped its own reference.
+  FlMethodChannel *events = FL_METHOD_CHANNEL(g_object_ref(channel));
   plugin->m_plugin->setInvokeMethodFunc([=](std::string method, WValue *arguments) {
     FlValue *args = encode_wavlue_to_flvalue(arguments);
-    fl_method_channel_invoke_method(channel, method.c_str(), args, NULL, NULL, NULL);
-    fl_value_unref(args);
+    on_main_thread([=]() {
+      fl_method_channel_invoke_method(events, method.c_str(), args, NULL, NULL, NULL);
+      fl_value_unref(args);
+    });
   });
 
   plugin->m_plugin->setCreateTextureFunc([=](){
