@@ -54,6 +54,12 @@ namespace webview_cef {
         void imeSetCompositionNative(const std::wstring& text, int cursor);
         void imeCommitTextNative(const std::wstring& text);
         void imeFinishCompositionNative();
+#ifdef __linux__
+        // The focused browser's selected text (UTF-8), for the Linux plugin to
+        // put on the clipboard itself; see WebviewHandler::selectedText.
+        std::string focusedSelectedText();
+#endif
+
     private :
         // Resolve the browserId whose renderer currently has focus, or -1.
         int focusedBrowserId();

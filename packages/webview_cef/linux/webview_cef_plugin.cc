@@ -387,6 +387,10 @@ FLUTTER_PLUGIN_EXPORT void setCEFRootCachePath(const char *path)
 // to come up, or it stays pressed in Flutter's HardwareKeyboard.
 static std::unordered_set<guint16> appOwnedKeys;
 
+// Keys whose press the plugin handled itself (paste), so their release is
+// swallowed too: the page must not see a key come up that never went down.
+static std::unordered_set<guint16> pluginOwnedKeys;
+
 // Keys are classified by their Windows key code, as Chromium does, not by
 // the layout's keyval. It follows the physical key on layouts without Latin
 // letters, where Ctrl+C arrives as Ctrl+Cyrillic_es, and it leaves out the
@@ -425,6 +429,68 @@ static bool isAppShortcut(GdkEventKey *event, KeyboardCode code)
   default:
     return true;
   }
+}
+
+// The clipboard, through GTK.
+//
+// On Wayland a client may only set or read the clipboard while one of its
+// surfaces has keyboard focus. CEF talks to the compositor over its own
+// connection and draws off-screen, so it never has focus: its copies stayed
+// inside Chromium ("No serial found for selection") and it never saw what
+// other programs copied. GTK's window is the one with focus, so the plugin
+// moves the text across itself. Running CEF on X11 through XWayland instead
+// was tried: Hyprland does not bridge an unfocused X client's clipboard.
+static bool isCopy(GdkEventKey *event, KeyboardCode code)
+{
+  return (event->state & GDK_CONTROL_MASK) != 0 &&
+         (code == VKEY_C || code == VKEY_X || code == VKEY_INSERT);
+}
+
+static bool isPaste(GdkEventKey *event, KeyboardCode code)
+{
+  if ((event->state & GDK_CONTROL_MASK) != 0)
+  {
+    return code == VKEY_V;
+  }
+  return (event->state & GDK_SHIFT_MASK) != 0 && code == VKEY_INSERT;
+}
+
+// Puts the page's selection on the clipboard. The key itself still goes to
+// the page, which copies or cuts as usual; Chromium reports the selection as
+// it changes, so it is current when the key arrives.
+static void copySelectionToClipboard(webview_cef::WebviewPlugin *plugin)
+{
+  const std::string text = plugin->focusedSelectedText();
+  if (!text.empty())
+  {
+    gtk_clipboard_set_text(gtk_clipboard_get(GDK_SELECTION_CLIPBOARD),
+                           text.c_str(), static_cast<gint>(text.size()));
+  }
+}
+
+// Inserts the clipboard's text into the focused page, the way an input
+// method commits text. The page sees typing rather than a paste event, which
+// is what a text field needs; a page that reads paste events (an image, rich
+// text) gets nothing.
+static void pasteClipboardIntoPage(int64_t id)
+{
+  gtk_clipboard_request_text(
+      gtk_clipboard_get(GDK_SELECTION_CLIPBOARD),
+      [](GtkClipboard *, const gchar *text, gpointer data)
+      {
+        if (text == nullptr || text[0] == '\0')
+        {
+          return;
+        }
+        // Looked up again: the clipboard answers later, on the main loop.
+        auto it = webviewPlugins.find(reinterpret_cast<int64_t>(data));
+        std::wstring wide;
+        if (it != webviewPlugins.end() && utf8_to_wstring(text, wide))
+        {
+          it->second->imeCommitTextNative(wide);
+        }
+      },
+      reinterpret_cast<gpointer>(id));
 }
 
 // The modifier flag a modifier key sets. GDK reports the state from before
@@ -511,10 +577,15 @@ FLUTTER_PLUGIN_EXPORT gboolean processKeyEventForCEF(GtkWidget *widget, GdkEvent
     // A press starts the key over: its last release may have gone to
     // another window (a dialog this key opened) and never reached us.
     appOwnedKeys.erase(event->hardware_keycode);
+    pluginOwnedKeys.erase(event->hardware_keycode);
   }
   else if (appOwnedKeys.erase(event->hardware_keycode) > 0)
   {
     return passToFlutter(event);
+  }
+  else if (pluginOwnedKeys.erase(event->hardware_keycode) > 0)
+  {
+    return TRUE;
   }
   int64_t _id = int64_t(widget);
   if (webviewPlugins.find(_id) != webviewPlugins.end() && webviewPlugins[_id]->getAnyBrowserFocused())
@@ -524,6 +595,17 @@ FLUTTER_PLUGIN_EXPORT gboolean processKeyEventForCEF(GtkWidget *widget, GdkEvent
     {
       appOwnedKeys.insert(event->hardware_keycode);
       return passToFlutter(event);
+    }
+    if (event->type == GDK_KEY_PRESS && isPaste(event, windows_key_code))
+    {
+      // Not forwarded: Chromium would paste its own, stale copy as well.
+      pluginOwnedKeys.insert(event->hardware_keycode);
+      pasteClipboardIntoPage(_id);
+      return TRUE;
+    }
+    if (event->type == GDK_KEY_PRESS && isCopy(event, windows_key_code))
+    {
+      copySelectionToClipboard(webviewPlugins[_id].get());
     }
     CefKeyEvent key_event;
     key_event.windows_key_code =

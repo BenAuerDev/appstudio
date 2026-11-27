@@ -708,6 +708,14 @@ namespace webview_cef {
 		return -1;
 	}
 
+#ifdef __linux__
+	std::string WebviewPlugin::focusedSelectedText(){
+		if (isCefShutdown) return std::string();
+		int id = focusedBrowserId();
+		return id < 0 ? std::string() : m_handler->selectedText(id);
+	}
+#endif
+
 	bool WebviewPlugin::isEditableFocused(){
 		LOCK_RENDERERS();
 		int id = focusedBrowserId();
