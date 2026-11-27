@@ -13,6 +13,14 @@ int main(int argc, char** argv) {
     return exit_code;
   }
 
+  // CEF's own folder, inside App Studio's ($XDG_DATA_HOME/
+  // dev.serverpod.appstudio, ToolchainPaths.appSupportRoot), so a crashed
+  // run's singleton lock cannot block another CEF app, or the next start.
+  // GLib reads XDG_DATA_HOME the way the Dart side does.
+  g_autofree gchar* cef_root = g_build_filename(
+      g_get_user_data_dir(), APPLICATION_ID, "CEF", nullptr);
+  setCEFRootCachePath(cef_root);
+
   g_autoptr(MyApplication) app = my_application_new();
   return g_application_run(G_APPLICATION(app), argc, argv);
 }

@@ -343,6 +343,43 @@ FLUTTER_PLUGIN_EXPORT int initCEFProcesses(int argc, char **argv)
   return webview_cef::initCEFProcesses(main_args);
 }
 
+// [text] as a std::wstring, or false when it is not valid UTF-8. wchar_t is
+// UTF-32 on Linux, which is what g_utf8_to_ucs4 produces.
+static bool utf8_to_wstring(const char *text, std::wstring &out)
+{
+  glong length = 0;
+  gunichar *wide = g_utf8_to_ucs4(text, -1, nullptr, &length, nullptr);
+  if (wide == nullptr)
+  {
+    return false;
+  }
+  out.clear();
+  out.reserve(length);
+  for (glong i = 0; i < length; i++)
+  {
+    out.push_back(static_cast<wchar_t>(wide[i]));
+  }
+  g_free(wide);
+  return true;
+}
+
+FLUTTER_PLUGIN_EXPORT void setCEFRootCachePath(const char *path)
+{
+  if (path == nullptr)
+  {
+    webview_cef::setRootCachePath(std::wstring());
+    return;
+  }
+  std::wstring root;
+  if (!utf8_to_wstring(path, root))
+  {
+    g_warning("CEF cache folder is not valid UTF-8, using CEF's default: %s",
+              path);
+    return;
+  }
+  webview_cef::setRootCachePath(root);
+}
+
 FLUTTER_PLUGIN_EXPORT gboolean processKeyEventForCEF(GtkWidget *widget, GdkEventKey *event, gpointer data)
 {
   int64_t _id = int64_t(widget);
