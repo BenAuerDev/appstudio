@@ -12,12 +12,11 @@ project(${PROJECT_NAME} LANGUAGES CXX C)
 # CEF 149 public headers require C++20.
 set(CMAKE_CXX_STANDARD 20)
 
-# Auto setup Linux target
-execute_process(
-  COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/target_modifier/modify_target.sh"
-  OUTPUT_VARIABLE patch_output
-)
-message(WARNING "${patch_output}")
+# No auto setup of the app's runner. target_modifier/modify_target.sh patches
+# linux/main.cc and linux/my_application.cc, which current Flutter no longer
+# generates (they live in linux/runner/), so it patched nothing and every CEF
+# helper booted a full copy of the app. The app wires initCEFProcesses and
+# processKeyEventForCEF into its runner by hand instead.
 
 # Setup CEF
 include(${CMAKE_CURRENT_SOURCE_DIR}/../third/download.cmake)
