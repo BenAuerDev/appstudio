@@ -82,11 +82,6 @@ add_subdirectory(${CEF_LIBCEF_DLL_WRAPPER_PATH} libcef_dll_wrapper)
 # Find required libraries and update compiler/linker variables.
 FIND_LINUX_LIBRARIES("gmodule-2.0 gtk+-3.0 gthread-2.0 gtk+-unix-print-3.0 xi")
 
-find_program(XCLIP_EXECUTABLE xclip)
-if(NOT XCLIP_EXECUTABLE)
-  message(AUTHOR_WARNING "xclip executable not found. Users need it to paste text into CEF Area.")
-endif()
-
 # Executable target.
 # add_executable(${CEF_TARGET} ${CEFCLIENT_SRCS})
 SET_EXECUTABLE_TARGET_PROPERTIES(${CEF_TARGET})
