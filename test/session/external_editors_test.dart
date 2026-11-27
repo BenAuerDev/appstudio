@@ -43,7 +43,7 @@ void main() {
       'Cursor',
       'Visual Studio Code',
       'Claude',
-      'Codex',
+      'ChatGPT',
       'OpenCode',
     },
     required _FakeSession session,
@@ -56,7 +56,7 @@ void main() {
       session: session,
       process: process ?? _FakeProcess(projectIsReady: true),
       readEditors: (path) async => editorsByProject[path] ?? const {},
-      findApp: (name) =>
+      findApp: (name, bundleId) =>
           installedApps.contains(name) ? '/Applications/$name.app' : null,
       fileExists: (_) => cliIsPresent,
       launch: (command) async {
@@ -189,7 +189,7 @@ void main() {
               ? {IdeIntegration.cursor}
               : {IdeIntegration.vscode};
         },
-        findApp: (name) => '/Applications/$name.app',
+        findApp: (name, _) => '/Applications/$name.app',
         launch: (_) async => true,
         host: HostPlatform.macos,
       );
@@ -339,6 +339,44 @@ void main() {
     ]);
   });
 
+  test('finds Codex as ChatGPT.app, the name it ships under now', () async {
+    final session = _FakeSession()..setPath('/p');
+    final lookups = <(String, String?)>[];
+    final editors = ExternalEditorsController(
+      session: session,
+      process: _FakeProcess(projectIsReady: true),
+      readEditors: (_) async => {IdeIntegration.codex},
+      findApp: (name, bundleId) {
+        lookups.add((name, bundleId));
+        return name == 'ChatGPT' ? '/Applications/ChatGPT.app' : null;
+      },
+      fileExists: (_) => true,
+      launch: (_) async => true,
+      host: HostPlatform.macos,
+    );
+    addTearDown(editors.dispose);
+    await pumpEventQueue();
+
+    expect(editors.editors.single.label, 'Codex');
+    // The identifier is what tells the Codex app from the chat-only ChatGPT.
+    expect(lookups.first, ('ChatGPT', 'com.openai.codex'));
+  });
+
+  test('still finds Codex under its old name', () async {
+    final session = _FakeSession()..setPath('/p');
+    final editors = controller(
+      session: session,
+      editorsByProject: {
+        '/p': {IdeIntegration.codex},
+      },
+      installedApps: {'Codex'},
+    );
+    addTearDown(editors.dispose);
+    await pumpEventQueue();
+
+    expect(editors.editors.single.label, 'Codex');
+  });
+
   test('a deep-link editor still has to be installed', () async {
     // Unlike `open -a`, `open <scheme>://…` exits 0 when nothing claims the
     // scheme, so the bundle check is the only thing standing between the user
@@ -400,7 +438,7 @@ void main() {
         process: _FakeProcess(projectIsReady: true),
         readEditors: (path) async => path == project ? configured : const {},
         // macOS lookups must never be what decides a Windows editor.
-        findApp: (_) => fail('looked for a macOS bundle'),
+        findApp: (_, _) => fail('looked for a macOS bundle'),
         fileExists: files.contains,
         launch: (_) => fail('launched a macOS command'),
         host: HostPlatform.windows,
@@ -416,24 +454,27 @@ void main() {
       );
     }
 
-    test('hands the folder to Cursor through its CLI, as an argument', () async {
-      final runs = <List<String>>[];
-      final editors = windowsController(
-        configured: {IdeIntegration.cursor},
-        files: {cursorExe, cursorCli},
-        cliRuns: runs,
-      );
-      addTearDown(editors.dispose);
-      await pumpEventQueue();
+    test(
+      'hands the folder to Cursor through its CLI, as an argument',
+      () async {
+        final runs = <List<String>>[];
+        final editors = windowsController(
+          configured: {IdeIntegration.cursor},
+          files: {cursorExe, cursorCli},
+          cliRuns: runs,
+        );
+        addTearDown(editors.dispose);
+        await pumpEventQueue();
 
-      expect(editors.editors.map((e) => e.id), ['cursor']);
-      await editors.open(editors.editors.single);
-      // The folder is one argument to a real `.exe` — never a `.cmd` line
-      // that cmd.exe would re-parse, spaces and all.
-      expect(runs, [
-        [cursorExe, cursorCli, project],
-      ]);
-    });
+        expect(editors.editors.map((e) => e.id), ['cursor']);
+        await editors.open(editors.editors.single);
+        // The folder is one argument to a real `.exe` — never a `.cmd` line
+        // that cmd.exe would re-parse, spaces and all.
+        expect(runs, [
+          [cursorExe, cursorCli, project],
+        ]);
+      },
+    );
 
     test('finds a machine-wide VS Code under Program Files', () async {
       const code = r'C:\Program Files\Microsoft VS Code\Code.exe';
