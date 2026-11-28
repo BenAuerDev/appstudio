@@ -15,6 +15,7 @@ import '../ui/server_log/server_log_view.dart';
 import '../util/open_url.dart';
 import '../util/prompt_generator.dart';
 import 'host_platform.dart';
+import 'linux/desktop_integration_status.dart';
 
 /// The Windows and Linux counterpart of [MacAppMenu]: the same commands with
 /// the same rules for when each is live, as a menu strip across the top of the
@@ -55,6 +56,9 @@ class WindowsAppMenuBar extends StatefulWidget {
     required this.child,
     this.stripHidden,
     this.host = HostPlatform.windows,
+    this.desktopIntegrationStatus,
+    this.onAddToApplications,
+    this.onRemoveFromApplications,
   });
 
   /// Windows or Linux: the two differ in how quitting is named and bound, and
@@ -92,6 +96,12 @@ class WindowsAppMenuBar extends StatefulWidget {
   /// True while the strip should not show — the compact preview. The
   /// shortcuts stay live, as the macOS menu bar's do.
   final bool Function()? stripHidden;
+
+  /// Linux: whether App Studio is in the app menu, for Help → Add to
+  /// Applications or Remove from Applications. Neither shows without it.
+  final DesktopIntegrationStatus Function()? desktopIntegrationStatus;
+  final VoidCallback? onAddToApplications;
+  final VoidCallback? onRemoveFromApplications;
 
   @override
   State<WindowsAppMenuBar> createState() => _WindowsAppMenuBarState();
@@ -495,6 +505,25 @@ class _WindowsAppMenuBarState extends State<WindowsAppMenuBar> {
         _item('Uninstall App Studio...', onPressed: widget.onUninstall),
         _divider,
       ],
+      // Only one of the two, and only for an AppImage nobody else added.
+      if (widget.host.isLinux)
+        ...switch (widget.desktopIntegrationStatus?.call()) {
+          DesktopIntegrationStatus.notAdded => [
+              _item(
+                'Add to Applications...',
+                onPressed: widget.onAddToApplications,
+              ),
+              _divider,
+            ],
+          DesktopIntegrationStatus.addedByAppStudio => [
+              _item(
+                'Remove from Applications...',
+                onPressed: widget.onRemoveFromApplications,
+              ),
+              _divider,
+            ],
+          _ => const <Widget>[],
+        },
       _item('About App Studio', onPressed: widget.onAbout),
     ];
   }

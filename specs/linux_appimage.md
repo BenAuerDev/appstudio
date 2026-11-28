@@ -70,7 +70,8 @@ whenever a question or the Help menu needs it:
    there, so an entry written under it never reaches the desktop.
 2. **In the app menu** means a desktop entry, in `$XDG_DATA_HOME/applications`
    (default `~/.local/share/applications`) or an `applications` folder under
-   `$XDG_DATA_DIRS`, sub-folders included, that is called
+   `$XDG_DATA_DIRS`, sub-folders included (one that cannot be read is
+   skipped), that is called
    `dev.serverpod.appstudio.desktop` or names
    `StartupWMClass=dev.serverpod.appstudio`. Gear Lever, AppImageLauncher and
    appimaged name their entries after the app or a hash, but keep the
@@ -112,7 +113,11 @@ App Studio will appear in your app menu, and the file moves from
 
 The sentence about the file names the folder it is in now. It is left out
 when the file is in `~/AppImages` already (where Add at most renames it to the
-fixed name), and when an earlier Add in the same run already moved it.
+fixed name), and when an earlier Add in the same run already moved it. When
+another file is at `~/AppImages/AppStudio-x86_64.AppImage` already (a copy
+left there by Remove, or whose entry was deleted by hand), the question adds
+"It replaces the App Studio already at ~/AppImages/AppStudio-x86_64.AppImage.",
+since that copy may be newer.
 **Not now** asks again on the next start; with the box ticked it never asks
 again on start.
 
@@ -196,7 +201,9 @@ marker, and rebuilds the icon cache as Add does. The AppImage stays where it
 is. Removing sets "Don't ask again" first (the user just said no), so a
 removal that fails halfway does not bring the question back either. A toast
 says "Removed from your applications", or, on failure, "Could not remove App
-Studio from your applications" with the reason.
+Studio from your applications" with the reason. Finding no entry of App
+Studio's to remove is a failure too: another tool may have rewritten it since
+the Help menu last looked.
 
 ### Another copy than the one in the app menu
 
@@ -222,8 +229,11 @@ number, which orders releases:
   everything above applies: the file is renamed over the old one, and the
   entry is rewritten with the new version. Once the move has happened the
   older copy is gone; if a later step fails, the existing entry and icons
-  stay, and the entry points at the new file while still naming the old
-  version. A toast says "App Studio 0.4.2 is in your applications".
+  stay and point at the new file. The entry then no longer records a
+  version: the one it named is gone, and compared with the next download it
+  could offer to replace a newer copy with an older one. Until an Add writes
+  the entry again, no copy is compared with it. A toast says "App Studio
+  0.4.2 is in your applications".
 - **This copy is older:**
 
   ```text
@@ -287,6 +297,8 @@ instance of it. Both are left as they are.
   `DesktopIntegrationController`, the state the menu strip listens to.
 - `lib/platform/linux/app_version.dart`: a version and build, and how two
   copies compare; free of `dart:io`.
+- `lib/platform/linux/desktop_integration_status.dart`: the four states,
+  free of `dart:io` so the menu strip can read them.
 - `lib/ui/add_to_applications_dialog.dart`: the dialogs, free of `dart:io`
   so Widgetbook shows them.
 - `lib/ui/desktop_integration_commands.dart`: what the question and the Help
@@ -360,25 +372,31 @@ If you use Gear Lever, open the file with it and choose
 ## E. Uninstall (PR 5)
 
 App Studio's uninstall on Linux, in PR 5, runs the same removal as Remove
-from Applications. Whether it also deletes the AppImage itself is decided
+from Applications, and counts "not in your app menu" as done: Remove reports
+it as a failure, which is right for the Help item but not for an uninstall
+on a machine where nothing was ever added. Whether it also deletes the AppImage itself is decided
 there.
 
 ## Testing
 
 - **Unit tests on every host** through `HostPlatform.linux`
   (`test/platform/linux/desktop_integration_test.dart`): each condition of
-  of the four states (inherited variables, a portable AppImage, entries in
-  sub-folders, a deleted `TryExec`), the entry it writes (including an
-  `Exec` path that needs quoting), a move within and across file systems and
-  out of a folder the file cannot leave, a failed step undoing only what it
-  created, a retry after the move, Remove leaving an entry without the marker
-  alone, and how another copy compares (newer, older, the same, no recorded
-  version). The dialogs and the Help items have widget tests, and
+  the four states (inherited variables, a portable AppImage, entries in
+  sub-folders, an unreadable sub-folder, a deleted `TryExec`), the entry it
+  writes (including an `Exec` path that needs quoting), a move within and
+  across file systems and out of a folder the file cannot leave, a Replace
+  across file systems, a failed step undoing only what it created, a retry
+  after the move, a failed Replace dropping the recorded version, Remove
+  leaving an entry without the marker alone and saying so, how another copy
+  compares (newer, older, the same, no recorded version), and Open starting
+  the added copy only once the given process has ended. The dialogs and the
+  Help items have widget tests, and
   `test/ui/desktop_integration_commands_test.dart` pins the preference both
-  ways: "Don't ask again" and Remove set it, Not now, Add and a cancelled
-  Remove do not.
+  ways ("Don't ask again" and Remove set it, Not now, Add and a cancelled
+  Remove do not), the question asked once per run and only on Linux, and
+  Open quitting this copy only when the newer one could be started.
 - **Widgetbook:** the question (from Downloads, already in `~/AppImages`,
-  from the Help menu), another copy (newer, older) and the Remove
+  replacing a copy left there, from the Help menu), another copy (newer, older) and the Remove
   confirmation.
 - **Ubuntu VM from `clean-install`:**
   - without Gear Lever: download in Firefox, allow it to run, start; after

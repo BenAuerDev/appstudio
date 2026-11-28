@@ -10,6 +10,7 @@ import 'cloud/cloud_publish.dart';
 import 'platform/afunix_settle.dart';
 import 'platform/compact_window.dart';
 import 'platform/host.dart';
+import 'platform/linux/desktop_integration.dart';
 import 'platform/window_close.dart';
 import 'platform/windows/win32_system.dart';
 import 'platform/windows/windows_roots.dart';
@@ -27,6 +28,7 @@ import 'update/session_teardown.dart';
 import 'update/update_controller.dart';
 import 'platform/macos_app_menu.dart';
 import 'ui/about_dialog.dart';
+import 'ui/desktop_integration_commands.dart';
 import 'ui/migration_commands.dart';
 import 'ui/server_log/log_view_controller.dart';
 import 'ui/new_project_dialog.dart';
@@ -69,6 +71,10 @@ Future<void> main() async {
   final cloud = CloudPublishController(toolchains: toolchains, session: session);
   final previewMode = PreviewModeController(window: CompactWindowChannel());
   final logView = LogViewController();
+  // Linux: whether the AppImage is in the app menu. Read from disk in the
+  // background; the menu item appears when it lands.
+  final desktopIntegration = DesktopIntegrationController();
+  if (currentHost.isLinux) unawaited(desktopIntegration.refresh());
 
   // Never blocks launch: create() swallows its own failures and reports the
   // updater as unavailable.
@@ -108,6 +114,7 @@ Future<void> main() async {
       updates: updates,
       previewMode: previewMode,
       logView: logView,
+      desktopIntegration: desktopIntegration,
     ),
   );
 }
@@ -125,6 +132,7 @@ class AppStudioApp extends StatefulWidget {
     required this.updates,
     required this.previewMode,
     required this.logView,
+    required this.desktopIntegration,
   });
 
   final ThemeController themeController;
@@ -137,6 +145,7 @@ class AppStudioApp extends StatefulWidget {
   final UpdateController updates;
   final PreviewModeController previewMode;
   final LogViewController logView;
+  final DesktopIntegrationController desktopIntegration;
 
   @override
   State<AppStudioApp> createState() => _AppStudioAppState();
@@ -184,6 +193,11 @@ class _AppStudioAppState extends State<AppStudioApp> {
   /// those overlapping would duplicate entries. Only the transition matters.
   bool? _menuCanOpenProjects;
 
+  /// Linux: offers to add the AppImage to the app menu, once per run.
+  late final _addToApplications = AddToApplicationsOffer(
+    widget.desktopIntegration,
+  );
+
   @override
   void initState() {
     super.initState();
@@ -225,6 +239,13 @@ class _AppStudioAppState extends State<AppStudioApp> {
       await _onExitRequested();
     };
     unawaited(_macMenu!.install());
+    // With setup done, the start page is the first screen: offer once it is
+    // up. Otherwise the end of setup offers (`_onToolchainsChanged`).
+    if (!_needsToolchainSetup) {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _offerAddToApplications(),
+      );
+    }
     // Clear anything a crashed install left behind. Fire and forget, so it
     // never delays launch; ToolchainSetupScreen drives the install itself.
     unawaited(widget.toolchains.collectGarbage());
@@ -305,9 +326,18 @@ class _AppStudioAppState extends State<AppStudioApp> {
           widget.updates,
           widget.toolchains,
           widget.previewMode,
+          widget.desktopIntegration,
         ]),
         // The compact preview is the phone frame alone.
         stripHidden: () => widget.previewMode.compactWindow,
+        desktopIntegrationStatus: () => widget.desktopIntegration.status,
+        onAddToApplications: () => _withNavigatorContext(
+          (context) => addToApplications(context, widget.desktopIntegration),
+        ),
+        onRemoveFromApplications: () => _withNavigatorContext(
+          (context) =>
+              removeFromApplications(context, widget.desktopIntegration),
+        ),
         child: child ?? const SizedBox.shrink(),
       );
 
@@ -334,9 +364,28 @@ class _AppStudioAppState extends State<AppStudioApp> {
     // current for exactly that reason: a second pop here would take `home` with
     // it and leave an empty navigator.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _clearPushedRoutes();
+      if (!mounted) return;
+      _clearPushedRoutes();
+      // After the clear, or it would take the question with it.
+      if (canOpen) _offerAddToApplications();
     });
     _syncMenu();
+  }
+
+  /// Linux, as an AppImage nobody added to the app menu: asks whether to,
+  /// once per run, over the start page and never among setup's dialogs.
+  void _offerAddToApplications() {
+    if (!mounted) return;
+    _withNavigatorContext(
+      (context) => _addToApplications.offerOnce(
+        context,
+        onStartPage: () =>
+            mounted &&
+            widget.session.projectPath == null &&
+            !_needsToolchainSetup &&
+            _uninstalled == null,
+      ),
+    );
   }
 
   /// Whether the first-run setup screen owns the window — see
@@ -529,6 +578,7 @@ class _AppStudioAppState extends State<AppStudioApp> {
     widget.themeController.dispose();
     widget.previewMode.dispose();
     widget.logView.dispose();
+    widget.desktopIntegration.dispose();
     super.dispose();
   }
 

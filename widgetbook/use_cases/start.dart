@@ -1,5 +1,7 @@
+import 'package:appstudio/platform/linux/app_version.dart';
 import 'package:appstudio/process/ide_integration.dart';
 import 'package:appstudio/process/new_project_view.dart';
+import 'package:appstudio/ui/add_to_applications_dialog.dart';
 import 'package:appstudio/ui/new_project_dialog.dart';
 import 'package:appstudio/ui/start_page.dart';
 import 'package:flutter/material.dart';
@@ -31,6 +33,13 @@ Widget _createProject(
         initialIde: ide,
         createOnOpen: createOnOpen,
       ),
+    );
+
+/// A Linux dialog over the start page, where the question on first start
+/// appears.
+DialogUseCase _overStartPage(Widget dialog) => DialogUseCase(
+      backdrop: StartPage(session: FakeRecentProjects(), onNewProject: () {}),
+      dialog: dialog,
     );
 
 final startFolder = WidgetbookFolder(
@@ -120,6 +129,83 @@ final startFolder = WidgetbookFolder(
             name: 'bookshelf',
             ide: IdeIntegration.cursor,
             createOnOpen: true,
+          ),
+        ),
+      ],
+    ),
+    WidgetbookComponent(
+      name: 'Add to Applications (Linux)',
+      useCases: [
+        WidgetbookUseCase(
+          name: 'On first start',
+          builder: (_) => _overStartPage(
+            AddToApplicationsDialog(
+              onAdd: () async {},
+              currentFolder: homePath('Downloads'),
+            ),
+          ),
+        ),
+        WidgetbookUseCase(
+          name: 'Already in ~/AppImages',
+          builder: (_) =>
+              _overStartPage(AddToApplicationsDialog(onAdd: () async {})),
+        ),
+        WidgetbookUseCase(
+          name: 'Replacing a copy left in ~/AppImages',
+          builder: (_) => _overStartPage(
+            AddToApplicationsDialog(
+              onAdd: () async {},
+              currentFolder: homePath('Downloads'),
+              replacedFile: homePath('AppImages/AppStudio-x86_64.AppImage'),
+            ),
+          ),
+        ),
+        WidgetbookUseCase(
+          name: 'From the Help menu',
+          builder: (_) => _overStartPage(
+            AddToApplicationsDialog(
+              onAdd: () async {},
+              currentFolder: homePath('Downloads'),
+              offerDontAskAgain: false,
+            ),
+          ),
+        ),
+      ],
+    ),
+    WidgetbookComponent(
+      name: 'Another copy (Linux)',
+      useCases: [
+        WidgetbookUseCase(
+          name: 'Newer than the one in the app menu',
+          builder: (_) => _overStartPage(
+            ReplaceAddedCopyDialog(
+              running: const AppVersion('0.4.2', 26),
+              added: const AppVersion('0.4.1', 25),
+              currentFolder: homePath('Downloads'),
+              onReplace: () async {},
+            ),
+          ),
+        ),
+        WidgetbookUseCase(
+          name: 'Older than the one in the app menu',
+          builder: (_) => _overStartPage(
+            const OlderCopyDialog(
+              running: AppVersion('0.4.0', 24),
+              added: AppVersion('0.4.1', 25),
+            ),
+          ),
+        ),
+      ],
+    ),
+    WidgetbookComponent(
+      name: 'Remove from Applications (Linux)',
+      useCases: [
+        WidgetbookUseCase(
+          name: 'Default',
+          builder: (_) => _overStartPage(
+            RemoveFromApplicationsDialog(
+              appImagePath: homePath('AppImages/AppStudio-x86_64.AppImage'),
+            ),
           ),
         ),
       ],
