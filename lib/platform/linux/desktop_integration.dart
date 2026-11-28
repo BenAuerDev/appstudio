@@ -451,11 +451,27 @@ class DesktopIntegration {
     }
   }
 
-  /// Rebuilds the user's icon cache, but only where one exists: without a
-  /// cache, icons are looked up on disk and a new one shows at once. Best
-  /// effort; a stale cache only costs the icon until the next rebuild.
+  /// Tells the desktop the icons changed, as `xdg-icon-resource` does.
+  /// GTK rescans a theme only when the theme folder's own modification time
+  /// moves, not its size folders', and judges an icon cache stale the same
+  /// way: icons copied into folders an earlier Add left behind stayed
+  /// generic until the next login. So the folder's time is moved first, by
+  /// adding a file and taking it away again (xdg's `.xdg-icon-resource-dummy`
+  /// does the same), and then an icon cache, where there is one, is
+  /// rebuilt. Should the rebuild fail, the moved time still marks the old
+  /// cache stale, and icons are looked up on disk. Best effort; a missed
+  /// refresh only costs the icon until the next one.
   Future<void> _refreshIconCache(String dataHome) async {
     final hicolor = p.join(dataHome, 'icons', 'hicolor');
+    // Nothing to refresh, and no folder to create, where none is.
+    if (!await Directory(hicolor).exists()) return;
+    try {
+      final marker = File(p.join(hicolor, '.appstudio-$pid'));
+      await marker.create();
+      await marker.delete();
+    } on FileSystemException catch (e) {
+      debugPrint('Could not refresh the icons in $hicolor: $e');
+    }
     if (!await File(p.join(hicolor, 'icon-theme.cache')).exists()) return;
     try {
       await Process.run('gtk-update-icon-cache', ['-f', '-t', hicolor]);

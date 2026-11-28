@@ -344,6 +344,43 @@ Exec=appstudio --extra
       );
     });
 
+    test(
+      'tells the desktop about icons copied into folders that were there',
+      () async {
+        // An earlier Add and Remove left the size folders; GTK only rescans
+        // when the theme folder itself changes.
+        final hicolor = p.join(home, '.local', 'share', 'icons', 'hicolor');
+        await Directory(
+          p.join(hicolor, '256x256', 'apps'),
+        ).create(recursive: true);
+        await Directory(
+          p.join(hicolor, '16x16', 'apps'),
+        ).create(recursive: true);
+        // `-t` reads the same on GNU and BSD touch.
+        final backdated = await Process.run('touch', [
+          '-t',
+          '200001010000',
+          hicolor,
+        ]);
+        expect(backdated.exitCode, 0, reason: '${backdated.stderr}');
+        expect((await Directory(hicolor).stat()).modified.year, 2000);
+
+        await integration().add();
+
+        final modified = (await Directory(hicolor).stat()).modified;
+        expect(modified.year, greaterThan(2000));
+        expect(
+          await Directory(
+            hicolor,
+          ).list().map((e) => p.basename(e.path)).toList(),
+          unorderedEquals(['256x256', '16x16']),
+          reason: 'nothing left behind',
+        );
+      },
+      tags: 'process',
+      testOn: '!windows',
+    );
+
     test('leaves an AppImage already in place where it is', () async {
       await File(target()).create(recursive: true);
       await File(target()).writeAsString('in place');
@@ -809,6 +846,18 @@ Exec=appstudio --extra
         expect(await File(entryPath()).readAsString(), theirs);
       },
     );
+
+    test('leaves no icon folder behind where there was none', () async {
+      await integration().add();
+      final hicolor = Directory(
+        p.join(home, '.local', 'share', 'icons', 'hicolor'),
+      );
+      await hicolor.delete(recursive: true);
+
+      await integration().remove();
+
+      expect(await hicolor.exists(), isFalse);
+    });
 
     test('says so when there is no entry to remove', () async {
       await expectLater(

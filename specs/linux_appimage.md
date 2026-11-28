@@ -172,10 +172,17 @@ The dialog stays open while it runs and shows any error in it.
    reads half an entry. The file name is the application id, so on Wayland
    the dock can match the window to it by its app id as well as by
    `StartupWMClass`.
-4. **Rebuilds the icon cache if there is one**: when
-   `$XDG_DATA_HOME/icons/hicolor/icon-theme.cache` exists, it runs
-   `gtk-update-icon-cache -f -t` on that folder (best effort). Without a
-   cache, icons are looked up on disk.
+4. **Tells the desktop the icons changed**, as `xdg-icon-resource` does.
+   GTK rescans the theme, and judges an icon cache stale, only when the
+   `hicolor` folder's own modification time moves, not its size folders'.
+   Copied into folders an earlier Add left behind (Remove keeps them), the
+   icon stayed generic until the next login. So Add first moves the
+   folder's time, by adding a file and taking it away again (xdg's
+   `.xdg-icon-resource-dummy`), then runs `gtk-update-icon-cache -f -t` on
+   the folder when `$XDG_DATA_HOME/icons/hicolor/icon-theme.cache` exists
+   (best effort; should it fail, the old cache is already stale and icons
+   are looked up on disk). Remove does the same, and creates no folder
+   where there was none.
 5. **Shows a toast**: "Added to your applications".
 
 `update-desktop-database` is not run: it only writes `mimeinfo.cache` from
