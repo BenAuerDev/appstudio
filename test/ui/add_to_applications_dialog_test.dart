@@ -160,6 +160,24 @@ void main() {
     expect(result(), isTrue);
   });
 
+  testWidgets('Replace says it copies where it cannot move', (tester) async {
+    await show(
+      tester,
+      ReplaceAddedCopyDialog(
+        running: newer,
+        added: older,
+        currentFolder: '/opt/as',
+        keepsOriginal: true,
+        onReplace: () async {},
+      ),
+    );
+
+    expect(
+      find.textContaining('Replace puts a copy of it from /opt/as into'),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('an older copy offers to open the newer one', (tester) async {
     final result = await show(
       tester,

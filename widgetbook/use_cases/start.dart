@@ -171,6 +171,16 @@ final startFolder = WidgetbookFolder(
               _overStartPage(AddToApplicationsDialog(onAdd: () async {})),
         ),
         WidgetbookUseCase(
+          name: 'From a folder it can only copy from',
+          builder: (_) => _overStartPage(
+            AddToApplicationsDialog(
+              onAdd: () async {},
+              currentFolder: '/opt/as',
+              keepsOriginal: true,
+            ),
+          ),
+        ),
+        WidgetbookUseCase(
           name: 'Replacing a copy left in ~/AppImages',
           builder: (_) => _overStartPage(
             AddToApplicationsDialog(

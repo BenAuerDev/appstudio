@@ -173,6 +173,40 @@ class DesktopIntegration {
     return folder;
   }
 
+  /// Whether [add] has to copy the AppImage and leave the original where it
+  /// is: App Studio may not take the file out of its folder (a root-owned
+  /// `/opt`, a read-only file system, or a shared sticky folder such as
+  /// `/tmp` with someone else's file). The question then says so rather
+  /// than promising a move.
+  ///
+  /// Asked of the permissions, without writing anything: nothing outside
+  /// App Studio's own folders is touched before the user answers. An
+  /// immutable file (`chattr +i`) is not detected; Add still copies it, and
+  /// only the wording is off.
+  Future<bool> keepsOriginal() async {
+    final folder = await currentFolder();
+    final appImage = _appImage;
+    if (folder == null || appImage == null) return false;
+    try {
+      // Taking a file out of a folder needs write and search permission on
+      // the folder and, in a sticky one, owning the file or the folder, or
+      // being root.
+      final result = await Process.run('/bin/sh', [
+        '-c',
+        r'[ -w "$1" ] && [ -x "$1" ] && '
+            r'{ [ ! -k "$1" ] || [ -O "$1" ] || [ -O "$2" ] || '
+            r'[ "$(id -u)" = 0 ]; }',
+        'sh',
+        folder,
+        appImage,
+      ]);
+      return result.exitCode != 0;
+    } on ProcessException {
+      // No shell to ask: say it moves, as before.
+      return false;
+    }
+  }
+
   /// Whether [add] would replace another file at [addedAppImagePath]: a copy
   /// left there after Remove, or after its entry was deleted by hand. It may
   /// be a newer build, so the question says so.

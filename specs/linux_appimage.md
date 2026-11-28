@@ -118,6 +118,17 @@ another file is at `~/AppImages/AppStudio-x86_64.AppImage` already (a copy
 left there by Remove, or whose entry was deleted by hand), the question adds
 "It replaces the App Studio already at ~/AppImages/AppStudio-x86_64.AppImage.",
 since that copy may be newer.
+
+When App Studio may not take the file out of its folder (a root-owned
+`/opt`, a read-only file system, or a shared sticky folder such as `/tmp`
+holding someone else's file), Add copies it and the original stays, so the
+sentence reads "App Studio will appear in your app menu, with a copy of the
+file in ~/AppImages. The one in /opt/as stays, since App Studio cannot move
+it from there." This is read from the folder's permissions (`test -w`, `-x`,
+and for a sticky folder `-O`, or root), without writing anything there
+before the user answers. An immutable file (`chattr +i`) is not detected: Add still
+copies it, and only the wording is off.
+
 **Not now** asks again on the next start; with the box ticked it never asks
 again on start.
 
@@ -232,7 +243,10 @@ number, which orders releases:
   ```
 
   When the copy is in `~/AppImages` already, the second sentence reads
-  "Replace puts it in place of the older one." Replace runs Add, so
+  "Replace puts it in place of the older one." Where the file can only be
+  copied out of its folder (as for the question above), it reads "Replace
+  puts a copy of it from /opt/as into ~/AppImages, in place of the older
+  one." Replace runs Add, so
   everything above applies: the file is renamed over the old one, and the
   entry is rewritten with the new version. Once the move has happened the
   older copy is gone; if a later step fails, the existing entry and icons
