@@ -116,13 +116,22 @@ class LinuxUpdater {
   /// or null when this is not one.
   String? get appImage => runningAppImage(_environment, _executable);
 
-  /// The file an update replaces: [appImage], unless Add to Applications
-  /// moved it in this run, when `$APPIMAGE` still names where it was and
-  /// the file is at `~/AppImages` now. Null when neither is there.
+  /// The file an update replaces: the copy in the app menu when it is this
+  /// build, otherwise [appImage]. Null when neither is there.
+  ///
+  /// The menu's copy comes first because Add to Applications may have
+  /// put it there in this run: `$APPIMAGE` still names where the file was,
+  /// and when Add had to copy rather than move (a folder the file could not
+  /// be taken out of, such as /opt), the original is still there and still
+  /// cannot be written to. The menu's copy is also the one started next.
+  ///
+  /// So a second copy of the same build, run from `~/Downloads` say,
+  /// updates the menu's copy and restarts that one. The copy that ran stays
+  /// as it is, and when it is started again it offers to open the newer
+  /// one in the app menu (the "another copy" question).
   Future<String?> liveAppImage() async {
     final started = appImage;
     if (started == null) return null;
-    if (await File(started).exists()) return started;
     // Only the copy this one became: App Studio's entry names it and
     // records this build. Any other file there (one left after Remove,
     // perhaps newer) is not this App Studio's to replace.
@@ -134,6 +143,7 @@ class LinuxUpdater {
         await _desktop.recordedVersionOf(added) == running) {
       return added;
     }
+    if (await File(started).exists()) return started;
     return null;
   }
 
@@ -209,10 +219,17 @@ class LinuxUpdater {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(lastCheckKey, DateTime.now().millisecondsSinceEpoch);
     // A download a crash or a kill interrupted is ~140 MB nobody would find:
-    // it is hidden. No download runs while a check does.
-    final live = await liveAppImage();
-    if (live != null && !_downloading) {
-      await discard(p.join(p.dirname(live), partName));
+    // it is hidden. It can sit beside either copy, since which one an update
+    // replaces depends on the app menu at the time. No download runs while
+    // a check does.
+    if (!_downloading) {
+      final folders = {
+        for (final path in [appImage, await liveAppImage()])
+          if (path != null) p.dirname(path),
+      };
+      for (final folder in folders) {
+        await discard(p.join(folder, partName));
+      }
     }
     final http.Response response;
     try {
@@ -289,25 +306,39 @@ class LinuxUpdater {
       );
     }
 
+    // One listener for the whole download, not one per chunk.
+    final cancelled = cancellation?.whenCancelled.then<Null>((_) => null);
     var complete = false;
     try {
-      final response = await _client
-          .send(http.Request('GET', item.url))
-          .timeout(const Duration(seconds: 30));
+      final response = await _orCancelled(
+        _client
+            .send(http.Request('GET', item.url))
+            .timeout(const Duration(seconds: 30)),
+        cancelled,
+        // A response that arrives after Cancel would hold its connection
+        // open: nobody reads its body.
+        dropLate: (late) => late.stream.listen(null).cancel(),
+      );
+      if (response == null) return null;
       if (response.statusCode != 200) {
         throw LinuxUpdateException(
           'The download answered ${response.statusCode}.',
         );
       }
       var received = 0;
-      await for (final chunk in response.stream.timeout(
-        const Duration(seconds: 60),
-      )) {
-        if (cancellation?.isCancelled ?? false) break;
-        received += chunk.length;
-        if (received > item.length) break;
-        sink.add(chunk);
-        onProgress?.call(received, item.length);
+      final chunks = StreamIterator(
+        response.stream.timeout(const Duration(seconds: 60)),
+      );
+      try {
+        while (await _orCancelled(chunks.moveNext(), cancelled) ?? false) {
+          final chunk = chunks.current;
+          received += chunk.length;
+          if (received > item.length) break;
+          sink.add(chunk);
+          onProgress?.call(received, item.length);
+        }
+      } finally {
+        await chunks.cancel();
       }
       await sink.close();
       if (cancellation?.isCancelled ?? false) return null;
@@ -341,6 +372,7 @@ class LinuxUpdater {
       complete = true;
       return VerifiedUpdate._(part.path, item);
     } on TimeoutException {
+      if (cancellation?.isCancelled ?? false) return null;
       throw const LinuxUpdateException('The download stopped answering.');
     } on LinuxUpdateException {
       rethrow;
@@ -430,4 +462,22 @@ Future<bool> verifyEd25519File(
       publicKey: SimplePublicKey(keyBytes, type: KeyPairType.ed25519),
     ),
   );
+}
+
+/// [future]'s value, or null as soon as [cancelled] completes. A value
+/// [future] gives after that goes to [dropLate], and an error it raises is
+/// dropped: nobody is waiting for either.
+Future<T?> _orCancelled<T>(
+  Future<T> future,
+  Future<Null>? cancelled, {
+  void Function(T late)? dropLate,
+}) {
+  if (cancelled == null) return future;
+  var settled = false;
+  // Registered before the race's own listeners, so a value that wins the
+  // race arrives here first, while settled is still false.
+  future.then<void>((value) {
+    if (settled) dropLate?.call(value);
+  }, onError: (Object _) {});
+  return Future.any<T?>([future, cancelled]).whenComplete(() => settled = true);
 }

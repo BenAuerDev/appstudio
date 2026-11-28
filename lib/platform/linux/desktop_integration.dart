@@ -747,8 +747,14 @@ String desktopEntryFor(
   return '${out.join('\n')}\n';
 }
 
-/// A string value: a backslash is written as two.
-String _escapeString(String value) => value.replaceAll(r'\', r'\\');
+/// A string value, escaped as the Desktop Entry spec says: a backslash, a
+/// newline, a tab and a carriage return each become two characters, so no
+/// value can start a line of its own.
+String _escapeString(String value) => value
+    .replaceAll(r'\', r'\\')
+    .replaceAll('\n', r'\n')
+    .replaceAll('\t', r'\t')
+    .replaceAll('\r', r'\r');
 
 /// One `Exec` argument, quoted as the Desktop Entry spec says: inside double
 /// quotes, `"`, `` ` ``, `$` and `\` take a backslash, and `%` is doubled.

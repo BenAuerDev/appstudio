@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -94,6 +95,7 @@ void main() {
   LinuxUpdater updater({
     LinuxUpdateConfig? config,
     Map<String, String>? environment,
+    http.Client? httpClient,
   }) {
     final e = environment ?? env;
     final executable = p.join(appDir, 'usr', 'lib', 'appstudio', 'appstudio');
@@ -106,7 +108,7 @@ void main() {
           ),
       environment: e,
       executable: executable,
-      client: client(),
+      client: httpClient ?? client(),
       runningVersion: () async => running,
       desktop: DesktopIntegration(
         environment: e,
@@ -387,6 +389,58 @@ void main() {
       expect(await File(part()).exists(), isFalse);
     });
 
+    test(
+      'stops at once when cancelled while the server sends nothing',
+      () async {
+        // One chunk, then silence: the stream never ends, and the download
+        // would otherwise wait out its 60 s timeout and report a failure.
+        final stalled = StreamController<List<int>>();
+        addTearDown(stalled.close);
+        stalled.add(newer.sublist(0, 8));
+        final cancellation = UpdateCancellation();
+        final verified =
+            await updater(
+                  httpClient: MockClient.streaming(
+                    (_, _) async => http.StreamedResponse(stalled.stream, 200),
+                  ),
+                )
+                .download(
+                  await item(),
+                  cancellation: cancellation,
+                  onProgress: (_, _) => Timer(
+                    const Duration(milliseconds: 50),
+                    cancellation.cancel,
+                  ),
+                )
+                .timeout(const Duration(seconds: 5));
+        expect(verified, isNull);
+        expect(await File(part()).exists(), isFalse);
+      },
+    );
+
+    test('stops at once when cancelled while connecting', () async {
+      final never = Completer<http.StreamedResponse>();
+      final cancellation = UpdateCancellation();
+      Timer(const Duration(milliseconds: 50), cancellation.cancel);
+      final verified =
+          await updater(
+                httpClient: MockClient.streaming((_, _) => never.future),
+              )
+              .download(await item(), cancellation: cancellation)
+              .timeout(const Duration(seconds: 5));
+      expect(verified, isNull);
+      expect(await File(part()).exists(), isFalse);
+
+      // The response turns up after all: its body is let go, so the
+      // connection does not stay open.
+      final body = StreamController<List<int>>();
+      final released = Completer<void>();
+      body.onCancel = released.complete;
+      body.onListen = () {};
+      never.complete(http.StreamedResponse(body.stream, 200));
+      await released.future.timeout(const Duration(seconds: 5));
+    });
+
     test('says so where the AppImage cannot be replaced', () async {
       if (Platform.isWindows) return;
       final uid = await Process.run('id', ['-u']);
@@ -515,6 +569,72 @@ void main() {
       },
       tags: 'process',
       testOn: '!windows',
+    );
+  });
+
+  group('after Add copied rather than moved', () {
+    test('clears a leftover download beside either copy', () async {
+      final added = p.join(
+        env['HOME']!,
+        'AppImages',
+        'AppStudio-x86_64.AppImage',
+      );
+      await File(added).create(recursive: true);
+      await writeOwnEntry(added, running);
+      final besideStarted = File(part());
+      final besideAdded = File(p.join(p.dirname(added), LinuxUpdater.partName));
+      await besideStarted.writeAsString('half a download');
+      await besideAdded.writeAsString('half a download');
+
+      await updater().check();
+
+      expect(await besideStarted.exists(), isFalse);
+      expect(await besideAdded.exists(), isFalse);
+    });
+
+    test(
+      'replaces the copy in ~/AppImages, not the original left behind',
+      () async {
+        // Add could not take the file out of its folder (/opt, say), so it
+        // copied it; the original is still where `$APPIMAGE` names it.
+        final added = p.join(
+          env['HOME']!,
+          'AppImages',
+          'AppStudio-x86_64.AppImage',
+        );
+        await File(added).create(recursive: true);
+        await File(appImage).copy(added);
+        await writeOwnEntry(added, running);
+        final original = await File(appImage).readAsBytes();
+        final u = updater();
+
+        expect(await u.liveAppImage(), added);
+        final verified = await u.download((await u.check())!);
+        expect(p.dirname(verified!.path), p.dirname(added));
+        final ended = await Process.start('true', []);
+        await ended.exitCode;
+        await u.install(verified, afterPid: ended.pid);
+
+        expect(await File(added).readAsBytes(), newer);
+        expect(await File(appImage).readAsBytes(), original);
+      },
+      tags: 'process',
+      testOn: '!windows',
+    );
+
+    test(
+      'replaces the started file when the menu\'s copy is another build',
+      () async {
+        final added = p.join(
+          env['HOME']!,
+          'AppImages',
+          'AppStudio-x86_64.AppImage',
+        );
+        await File(added).create(recursive: true);
+        await writeOwnEntry(added, const AppVersion('0.4.0', 24));
+
+        expect(await updater().liveAppImage(), appImage);
+      },
     );
   });
 

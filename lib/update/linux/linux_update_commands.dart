@@ -32,7 +32,7 @@ Future<void> checkForUpdatesOnLinux(
           onChecked?.call();
         }
       },
-      install: _installer(updater, quit ?? _quitApp),
+      install: _installer(updater, quit ?? _quitApp, ModalRoute.of(context)),
       onSkip: updater.skip,
     ),
   );
@@ -85,7 +85,7 @@ class LinuxUpdateSchedule {
         builder: (context) => LinuxUpdateDialog.offer(
           current: current,
           update: update!,
-          install: _installer(updater, _quit),
+          install: _installer(updater, _quit, ModalRoute.of(context)),
           onSkip: updater.skip,
         ),
       );
@@ -95,23 +95,33 @@ class LinuxUpdateSchedule {
   }
 }
 
-InstallUpdate _installer(LinuxUpdater updater, Future<void> Function() quit) =>
-    (item, {required onProgress, required cancellation}) async {
-      final verified = await updater.download(
-        item,
-        onProgress: onProgress,
-        cancellation: cancellation,
-      );
-      if (verified == null) return false;
-      // The dialog may have gone while the signature was checked.
-      if (cancellation.isCancelled) {
-        await updater.discard(verified.path);
-        return false;
-      }
-      await updater.install(verified);
-      await quit();
-      return true;
-    };
+/// Installs only while [dialog] is the route on top. The menu strip's
+/// shortcuts still work under the dialog, so New Project (Ctrl+N) or
+/// Settings (Ctrl+,) can open over it while it downloads, and installing
+/// then would quit App Studio in the middle of `serverpod create` or a
+/// tool install. A covered dialog drops its download and goes back to the
+/// offer, as a cancel does.
+InstallUpdate _installer(
+  LinuxUpdater updater,
+  Future<void> Function() quit,
+  ModalRoute<Object?>? dialog,
+) => (item, {required onProgress, required cancellation}) async {
+  final verified = await updater.download(
+    item,
+    onProgress: onProgress,
+    cancellation: cancellation,
+  );
+  if (verified == null) return false;
+  // The dialog may have gone, or been covered, while the signature was
+  // checked.
+  if (cancellation.isCancelled || !(dialog?.isCurrent ?? false)) {
+    await updater.discard(verified.path);
+    return false;
+  }
+  await updater.install(verified);
+  await quit();
+  return true;
+};
 
 /// The same quit as File → Quit, teardown included; the new AppImage starts
 /// once this process has ended.

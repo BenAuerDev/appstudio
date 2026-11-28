@@ -665,7 +665,8 @@ namespace webview_cef {
 		if(ev.type == KEYEVENT_RAWKEYDOWN && ev.windows_key_code == 0x7B && (ev.modifiers & EVENTFLAG_CONTROL_DOWN) != 0){
 			LOCK_RENDERERS();
 			for(auto render : m_renderers){
-				if(render.second.get()->isFocused){
+				// A closed browser keeps its entry with a null renderer.
+				if(render.second != nullptr && render.second.get()->isFocused){
 					m_handler->openDevTools(render.first);
 				}
 			}

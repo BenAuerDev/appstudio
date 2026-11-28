@@ -126,9 +126,12 @@ Exec=appstudio --extra
     });
 
     test('there is nothing to add on another OS', () async {
+      // Everything else as in a real AppImage, so only the OS says no.
       final mac = DesktopIntegration(
         environment: env,
         host: HostPlatform.macos,
+        runningVersion: () async => running,
+        executable: p.join(appDir, 'usr', 'lib', 'appstudio', 'appstudio'),
       );
       expect(await mac.status(), DesktopIntegrationStatus.unavailable);
     });
@@ -787,6 +790,29 @@ Exec=appstudio --extra
       expect(await File(entryPath()).readAsString(), before);
     });
 
+    test('a version cannot add a line to the entry', () async {
+      await integration().add();
+      await integration().recordUpdatedVersion(
+        target(),
+        const AppVersion('0.4.2\nExec=/tmp/x', 26),
+      );
+
+      final lines = (await File(entryPath()).readAsString()).split('\n');
+      expect(lines.where((l) => l.startsWith('Exec=/tmp')), isEmpty);
+      expect(
+        lines,
+        contains(
+          '$kAddedVersionKey='
+          r'0.4.2\nExec=/tmp/x',
+        ),
+      );
+      // And it reads back as it was written.
+      expect(
+        await integration().recordedVersionOf(target()),
+        const AppVersion('0.4.2\nExec=/tmp/x', 26),
+      );
+    });
+
     test('leaves an entry App Studio did not write alone', () async {
       const theirs =
           '[Desktop Entry]\nName=App Studio\nExec=/opt/x\nTryExec=/opt/x\n';
@@ -905,6 +931,26 @@ Exec=appstudio --extra
       expect(entry.split('\n').where((l) => l.startsWith('$kAddedBuildKey=')), [
         '$kAddedBuildKey=25',
       ]);
+    });
+
+    test('a version cannot start a line of its own', () {
+      final entry = desktopEntryFor(
+        sourceEntry,
+        appImagePath: '/a.AppImage',
+        version: const AppVersion('0.4.1\nExec=/tmp/x\t\r', 25),
+      );
+      expect(
+        entry,
+        contains(
+          '$kAddedVersionKey='
+          r'0.4.1\nExec=/tmp/x\t\r'
+          '\n',
+        ),
+      );
+      expect(
+        entry.split('\n').where((l) => l.startsWith('Exec=/tmp')),
+        isEmpty,
+      );
     });
 
     test('refuses a path with a line break', () {

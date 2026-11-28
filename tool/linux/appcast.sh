@@ -23,8 +23,16 @@
 # such a feed only reaches builds made with
 # APPSTUDIO_EDDSA_PUBLIC_KEY set to that key.
 #
-# Needs: openssl, python3, base64.
+# Runs on Linux only: it runs the AppImage to read its version, and uses GNU
+# stat and base64. Needs OpenSSL 3 (for `pkeyutl -rawin`), python3 and GNU
+# coreutils.
 set -euo pipefail
+
+if [[ "$(uname -s)" != Linux ]]; then
+  echo "appcast.sh runs on Linux only: it runs the AppImage to read its" \
+    "version. Run it on the machine or CI job that built the AppImage." >&2
+  exit 1
+fi
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 key="" url="" feed=""

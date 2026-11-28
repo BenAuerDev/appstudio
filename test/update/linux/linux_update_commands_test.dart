@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:appstudio/platform/linux/app_version.dart';
 import 'package:appstudio/update/linux/appcast.dart';
 import 'package:appstudio/update/linux/linux_update_commands.dart';
 import 'package:appstudio/update/linux/linux_updater.dart';
+import 'package:appstudio/widgets/nothing_pushed.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shad/shad.dart';
@@ -18,10 +21,12 @@ AppcastItem build(int build) => AppcastItem(
 /// install, and only over the start page.
 void main() {
   late _FakeUpdater updater;
+  late GlobalKey<NavigatorState> navigator;
 
   setUp(() {
     SharedPreferences.setMockInitialValues({});
     updater = _FakeUpdater();
+    navigator = GlobalKey<NavigatorState>();
   });
 
   Future<void> run(
@@ -30,6 +35,7 @@ void main() {
   ) async {
     await tester.pumpWidget(
       ShadApp(
+        navigatorKey: navigator,
         home: Builder(
           builder: (context) => ShadButton(
             onPressed: () => command(context),
@@ -41,6 +47,21 @@ void main() {
     await tester.tap(find.text('go'));
     await tester.pumpAndSettle();
   }
+
+  /// A full-screen route over the start page, as New Project is.
+  void pushNewProject() => unawaited(
+    navigator.currentState!.push(
+      PageRouteBuilder<void>(
+        pageBuilder: (_, _, _) => const Text('New Project'),
+      ),
+    ),
+  );
+
+  /// The automatic check with the start page test `main.dart` uses.
+  Future<void> checkIfDueOverStartPage(BuildContext context) =>
+      LinuxUpdateSchedule(
+        updater,
+      ).checkIfDue(context, onStartPage: () => nothingPushedOver(navigator));
 
   Future<void> checkIfDue(WidgetTester tester, {bool onStartPage = true}) =>
       run(
@@ -74,6 +95,47 @@ void main() {
     await checkIfDue(tester, onStartPage: false);
 
     expect(updater.checks, 0);
+  });
+
+  testWidgets('does not look with New Project open over the start page', (
+    tester,
+  ) async {
+    updater.update = build(26);
+    late BuildContext startPage;
+    await run(tester, (context) async => startPage = context);
+    pushNewProject();
+    await tester.pumpAndSettle();
+
+    unawaited(checkIfDueOverStartPage(startPage));
+    await tester.pumpAndSettle();
+
+    expect(updater.checks, 0);
+    expect(find.text('Install and Restart'), findsNothing);
+
+    navigator.currentState!.pop();
+    await tester.pumpAndSettle();
+    unawaited(checkIfDueOverStartPage(startPage));
+    await tester.pumpAndSettle();
+    expect(find.text('Install and Restart'), findsOneWidget);
+  });
+
+  testWidgets('offers nothing when New Project opened during the check', (
+    tester,
+  ) async {
+    updater.update = build(26);
+    final answer = Completer<void>();
+    updater.checkGate = answer.future;
+    await run(tester, (context) async {
+      unawaited(checkIfDueOverStartPage(context));
+    });
+    expect(updater.checks, 1);
+
+    pushNewProject();
+    await tester.pumpAndSettle();
+    answer.complete();
+    await tester.pumpAndSettle();
+
+    expect(find.text('Install and Restart'), findsNothing);
   });
 
   testWidgets('says nothing when there is no update', (tester) async {
@@ -146,6 +208,38 @@ void main() {
     expect(find.text('App Studio 0.4.26 is installed'), findsOneWidget);
   });
 
+  testWidgets('a download covered by New Project installs nothing', (
+    tester,
+  ) async {
+    // The menu strip's Ctrl+N still works under the dialog.
+    var quits = 0;
+    final downloaded = Completer<void>();
+    updater
+      ..update = build(26)
+      ..downloadGate = downloaded.future;
+    await run(
+      tester,
+      (context) =>
+          checkForUpdatesOnLinux(context, updater, quit: () async => quits++),
+    );
+    await tester.tap(find.text('Install and Restart'));
+    await tester.pump();
+
+    pushNewProject();
+    await tester.pumpAndSettle();
+    downloaded.complete();
+    await tester.pumpAndSettle();
+
+    expect(updater.installed, 0);
+    expect(updater.discarded, ['/tmp/part']);
+    expect(quits, 0);
+
+    // Back under it, the dialog offers the update again.
+    navigator.currentState!.pop();
+    await tester.pumpAndSettle();
+    expect(find.text('Install and Restart'), findsOneWidget);
+  });
+
   testWidgets('a cancelled download installs nothing and stays', (
     tester,
   ) async {
@@ -182,6 +276,9 @@ class _FakeUpdater extends LinuxUpdater {
   AppcastItem? update;
   int checks = 0;
   int installed = 0;
+  Future<void>? checkGate;
+  Future<void>? downloadGate;
+  final discarded = <String>[];
 
   @override
   Future<AppVersion?> runningVersion() async => const AppVersion('0.4.1', 25);
@@ -195,6 +292,7 @@ class _FakeUpdater extends LinuxUpdater {
   @override
   Future<AppcastItem?> check() async {
     checks++;
+    await checkGate;
     if (fails) {
       throw const LinuxUpdateException('The update server answered 500.');
     }
@@ -207,10 +305,14 @@ class _FakeUpdater extends LinuxUpdater {
     void Function(int received, int total)? onProgress,
     UpdateCancellation? cancellation,
   }) async {
+    await downloadGate;
     onProgress?.call(item.length, item.length);
     if (downloadCancelled) return null;
     return VerifiedUpdate.forTesting('/tmp/part', item);
   }
+
+  @override
+  Future<void> discard(String path) async => discarded.add(path);
 
   @override
   Future<void> install(VerifiedUpdate update, {int? afterPid}) async {

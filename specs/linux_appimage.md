@@ -1,6 +1,6 @@
 # Linux AppImage: adding App Studio to the app menu
 
-Status: **draft, 2026-11-27.** Follows PR 4 (`make appimage`,
+Status: **A, B and C built, 2026-11-28.** Follows PR 4 (`make appimage`,
 `tool/linux/build_appimage.sh`) on the step branch `linux/4b-appimage`, which
 merges into `linux/port` like the other steps.
 
@@ -19,8 +19,8 @@ Studio.
 
 | Part | What | Where | State |
 |---|---|---|---|
-| A | **Add to Applications**: on start, until it is in the app menu, App Studio offers to add itself; **Remove from Applications** undoes it | App Studio (Dart), Linux only | being built |
-| B | **Updates from inside the app**: Help → Check for Updates, and a daily check, replace the AppImage in place | App Studio (Dart), `tool/linux/`; feed and key are Serverpod's | being built |
+| A | **Add to Applications**: on start, until it is in the app menu, App Studio offers to add itself; **Remove from Applications** undoes it | App Studio (Dart), Linux only | done |
+| B | **Updates from inside the app**: Help → Check for Updates, and a daily check, replace the AppImage in place | App Studio (Dart), `tool/linux/`; feed and key are Serverpod's | done |
 | C | **A clear message on a system that cannot load App Studio**, instead of nothing happening | `AppRun` in the AppImage | done |
 | D | **Download page text** for Serverpod's website | text in this spec | written; needs A |
 | E | Uninstall removes what A added | App Studio (Dart) | with PR 5 |
@@ -326,8 +326,9 @@ format and the same rules.
 | B2 | **Every download is checked against an Ed25519 signature** over the whole file, as Sparkle and WinSparkle check theirs. The public key is compiled in; the private one never leaves Serverpod. A key pair from `openssl genpkey -algorithm ed25519` works, and so does signing with `openssl pkeyutl -sign -rawin`. |
 | B3 | **The feed URL and public key live in `linux/release.json`** (`appcastUrl`, `eddsaPublicKey`), as Windows keeps them in `windows/release.json`. `build_appimage.sh` passes them to `flutter build` as `--dart-define`s; `APPSTUDIO_APPCAST_URL` and `APPSTUDIO_EDDSA_PUBLIC_KEY` in the environment override them, for a local feed. Empty, updates are unavailable. |
 | B4 | **The build number is pubspec's**, the same `+N` the macOS build uses, so `make set_version` covers Linux too. |
-| B5 | **The AppImage is replaced in place**, at whatever path it runs from, and started again from there. A menu entry, App Studio's or another tool's, keeps working because the path stays the same. After an Add in the same run, that is `~/AppImages/AppStudio-x86_64.AppImage`, although `$APPIMAGE` still names the folder the file came from; it is taken only while App Studio's entry names it and records the running build, so another copy left there is never replaced. |
+| B5 | **The AppImage is replaced in place**, at whatever path it runs from, and started again from there. A menu entry, App Studio's or another tool's, keeps working because the path stays the same. When App Studio's entry names `~/AppImages/AppStudio-x86_64.AppImage` and records the running build, that file is the one replaced, even though `$APPIMAGE` still names the folder the file came from: after an Add in the same run, and also when Add had to copy rather than move and the original is still in a folder App Studio cannot write to (`/opt`, say). Another copy left there, of another build, is never replaced. So a second copy of the same build, run from `~/Downloads` say, updates the menu's copy and restarts that one; started again, the copy that ran offers to open the newer one. A leftover download is cleared beside both. |
 | B6 | **https only**, for the feed and every download: the signature covers the file, not the feed, so over plain http anyone in between could serve an older signed build as a newer one. Plain http is accepted only to this machine (`localhost`, `127/8`, `::1`) or a private IPv4 network (`10/8`, `172.16/12`, `192.168/16`), written in dotted decimal, which only a local test feed uses. The app, `build_appimage.sh` and `appcast.sh` check the same rule; the scripts also refuse a few odd spellings (percent-escaped hosts) the app lets through to the very host it checked. |
+| B7 | **The feed is not signed, so nothing in it is trusted beyond the file's signature.** `sparkle:shortVersionString` is written into App Studio's menu entry, so an item whose version is not letters, digits, `.`, `+` and `-` (64 at most) is left out, and every value written to the entry has its line breaks escaped. `build_appimage.sh` refuses a build with only one of the feed and the key. |
 
 ### When it checks
 
@@ -336,8 +337,11 @@ format and the same rules.
 - **Automatically, once a day** (Help → Check for Updates Automatically,
   on by default, as on macOS): on start after the Add question, and every
   hour after that whenever the last check is a day old. Only over the start
-  page: a project open means a running server, and an update dialog there
-  would interrupt work, as Sparkle's busy veto avoids on macOS and Windows.
+  page, with nothing pushed over it: a project open means a running server,
+  and an update dialog there would interrupt work, as Sparkle's busy veto
+  avoids on macOS and Windows. New Project and Settings count as work too,
+  since Install quits the app in the middle of `serverpod create` or a tool
+  install.
   An automatic check that finds nothing, or fails, says nothing.
 - Only when running as an AppImage (part A's condition 1). A development
   build, or one without a feed, shows "Check for Updates (unavailable in this
@@ -356,7 +360,9 @@ it is running.
 
 **Skip This Version** stops the automatic check offering that build; Help →
 Check for Updates still offers it, as Sparkle does. **Install and Restart**
-downloads with a progress bar and Cancel, then checks and installs:
+downloads with a progress bar and Cancel, then checks and installs. Cancel
+stops the download at once, even while the server has stopped sending; a
+server that stays silent for 60 s fails the download.
 
 1. **Downloads** to a hidden file beside the AppImage
    (`.AppStudio-update.part`), so the final rename stays on one file system
