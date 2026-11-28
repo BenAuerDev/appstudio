@@ -126,9 +126,12 @@ Exec=appstudio --extra
     });
 
     test('there is nothing to add on another OS', () async {
+      // Everything else as in a real AppImage, so only the OS says no.
       final mac = DesktopIntegration(
         environment: env,
         host: HostPlatform.macos,
+        runningVersion: () async => running,
+        executable: p.join(appDir, 'usr', 'lib', 'appstudio', 'appstudio'),
       );
       expect(await mac.status(), DesktopIntegrationStatus.unavailable);
     });
@@ -802,6 +805,11 @@ Exec=appstudio --extra
           '$kAddedVersionKey='
           r'0.4.2\nExec=/tmp/x',
         ),
+      );
+      // And it reads back as it was written.
+      expect(
+        await integration().recordedVersionOf(target()),
+        const AppVersion('0.4.2\nExec=/tmp/x', 26),
       );
     });
 
