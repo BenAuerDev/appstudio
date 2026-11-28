@@ -116,13 +116,22 @@ class LinuxUpdater {
   /// or null when this is not one.
   String? get appImage => runningAppImage(_environment, _executable);
 
-  /// The file an update replaces: [appImage], unless Add to Applications
-  /// moved it in this run, when `$APPIMAGE` still names where it was and
-  /// the file is at `~/AppImages` now. Null when neither is there.
+  /// The file an update replaces: the copy in the app menu when it is this
+  /// build, otherwise [appImage]. Null when neither is there.
+  ///
+  /// The menu's copy comes first because Add to Applications may have
+  /// put it there in this run: `$APPIMAGE` still names where the file was,
+  /// and when Add had to copy rather than move (a folder the file could not
+  /// be taken out of, such as /opt), the original is still there and still
+  /// cannot be written to. The menu's copy is also the one started next.
+  ///
+  /// So a second copy of the same build, run from `~/Downloads` say,
+  /// updates the menu's copy and restarts that one. The copy that ran stays
+  /// as it is, and when it is started again it offers to open the newer
+  /// one in the app menu (the "another copy" question).
   Future<String?> liveAppImage() async {
     final started = appImage;
     if (started == null) return null;
-    if (await File(started).exists()) return started;
     // Only the copy this one became: App Studio's entry names it and
     // records this build. Any other file there (one left after Remove,
     // perhaps newer) is not this App Studio's to replace.
@@ -134,6 +143,7 @@ class LinuxUpdater {
         await _desktop.recordedVersionOf(added) == running) {
       return added;
     }
+    if (await File(started).exists()) return started;
     return null;
   }
 
@@ -209,10 +219,17 @@ class LinuxUpdater {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(lastCheckKey, DateTime.now().millisecondsSinceEpoch);
     // A download a crash or a kill interrupted is ~140 MB nobody would find:
-    // it is hidden. No download runs while a check does.
-    final live = await liveAppImage();
-    if (live != null && !_downloading) {
-      await discard(p.join(p.dirname(live), partName));
+    // it is hidden. It can sit beside either copy, since which one an update
+    // replaces depends on the app menu at the time. No download runs while
+    // a check does.
+    if (!_downloading) {
+      final folders = {
+        for (final path in [appImage, await liveAppImage()])
+          if (path != null) p.dirname(path),
+      };
+      for (final folder in folders) {
+        await discard(p.join(folder, partName));
+      }
     }
     final http.Response response;
     try {

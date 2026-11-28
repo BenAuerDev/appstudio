@@ -572,6 +572,72 @@ void main() {
     );
   });
 
+  group('after Add copied rather than moved', () {
+    test('clears a leftover download beside either copy', () async {
+      final added = p.join(
+        env['HOME']!,
+        'AppImages',
+        'AppStudio-x86_64.AppImage',
+      );
+      await File(added).create(recursive: true);
+      await writeOwnEntry(added, running);
+      final besideStarted = File(part());
+      final besideAdded = File(p.join(p.dirname(added), LinuxUpdater.partName));
+      await besideStarted.writeAsString('half a download');
+      await besideAdded.writeAsString('half a download');
+
+      await updater().check();
+
+      expect(await besideStarted.exists(), isFalse);
+      expect(await besideAdded.exists(), isFalse);
+    });
+
+    test(
+      'replaces the copy in ~/AppImages, not the original left behind',
+      () async {
+        // Add could not take the file out of its folder (/opt, say), so it
+        // copied it; the original is still where `$APPIMAGE` names it.
+        final added = p.join(
+          env['HOME']!,
+          'AppImages',
+          'AppStudio-x86_64.AppImage',
+        );
+        await File(added).create(recursive: true);
+        await File(appImage).copy(added);
+        await writeOwnEntry(added, running);
+        final original = await File(appImage).readAsBytes();
+        final u = updater();
+
+        expect(await u.liveAppImage(), added);
+        final verified = await u.download((await u.check())!);
+        expect(p.dirname(verified!.path), p.dirname(added));
+        final ended = await Process.start('true', []);
+        await ended.exitCode;
+        await u.install(verified, afterPid: ended.pid);
+
+        expect(await File(added).readAsBytes(), newer);
+        expect(await File(appImage).readAsBytes(), original);
+      },
+      tags: 'process',
+      testOn: '!windows',
+    );
+
+    test(
+      'replaces the started file when the menu\'s copy is another build',
+      () async {
+        final added = p.join(
+          env['HOME']!,
+          'AppImages',
+          'AppStudio-x86_64.AppImage',
+        );
+        await File(added).create(recursive: true);
+        await writeOwnEntry(added, const AppVersion('0.4.0', 24));
+
+        expect(await updater().liveAppImage(), appImage);
+      },
+    );
+  });
+
   group('verifyEd25519File', () {
     test(
       'accepts what openssl signs, as the release pipeline does',
