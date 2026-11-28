@@ -10,6 +10,7 @@ import 'cloud/cloud_publish.dart';
 import 'platform/afunix_settle.dart';
 import 'platform/compact_window.dart';
 import 'platform/host.dart';
+import 'platform/linux/desktop_integration.dart';
 import 'platform/window_close.dart';
 import 'platform/windows/win32_system.dart';
 import 'platform/windows/windows_roots.dart';
@@ -23,10 +24,13 @@ import 'session/project_session.dart';
 import 'theme/app_theme.dart';
 import 'theme/theme_controller.dart';
 import 'toolchain/toolchain_controller.dart';
+import 'update/linux/linux_update_commands.dart';
+import 'update/linux/linux_updater.dart';
 import 'update/session_teardown.dart';
 import 'update/update_controller.dart';
 import 'platform/macos_app_menu.dart';
 import 'ui/about_dialog.dart';
+import 'ui/desktop_integration_commands.dart';
 import 'ui/migration_commands.dart';
 import 'ui/server_log/log_view_controller.dart';
 import 'ui/new_project_dialog.dart';
@@ -69,6 +73,12 @@ Future<void> main() async {
   final cloud = CloudPublishController(toolchains: toolchains, session: session);
   final previewMode = PreviewModeController(window: CompactWindowChannel());
   final logView = LogViewController();
+  // Linux: whether the AppImage is in the app menu. Read from disk in the
+  // background; the menu item appears when it lands.
+  final desktopIntegration = DesktopIntegrationController();
+  if (currentHost.isLinux) unawaited(desktopIntegration.refresh());
+  // Linux has no Sparkle: updates are App Studio's own (lib/update/linux/).
+  final linuxUpdater = currentHost.isLinux ? LinuxUpdater() : null;
 
   // Never blocks launch: create() swallows its own failures and reports the
   // updater as unavailable.
@@ -76,6 +86,7 @@ Future<void> main() async {
     process: process,
     agent: agent,
     cloud: cloud,
+    linux: linuxUpdater,
   );
 
   // Installed before the first event so nothing fires into the no-op default.
@@ -108,6 +119,8 @@ Future<void> main() async {
       updates: updates,
       previewMode: previewMode,
       logView: logView,
+      desktopIntegration: desktopIntegration,
+      linuxUpdater: linuxUpdater,
     ),
   );
 }
@@ -125,6 +138,8 @@ class AppStudioApp extends StatefulWidget {
     required this.updates,
     required this.previewMode,
     required this.logView,
+    required this.desktopIntegration,
+    this.linuxUpdater,
   });
 
   final ThemeController themeController;
@@ -137,6 +152,11 @@ class AppStudioApp extends StatefulWidget {
   final UpdateController updates;
   final PreviewModeController previewMode;
   final LogViewController logView;
+  final DesktopIntegrationController desktopIntegration;
+
+  /// The updater on Linux; null on macOS and Windows, where Sparkle and
+  /// WinSparkle update.
+  final LinuxUpdater? linuxUpdater;
 
   @override
   State<AppStudioApp> createState() => _AppStudioAppState();
@@ -184,6 +204,19 @@ class _AppStudioAppState extends State<AppStudioApp> {
   /// those overlapping would duplicate entries. Only the transition matters.
   bool? _menuCanOpenProjects;
 
+  /// Linux: offers to add the AppImage to the app menu, once per run.
+  late final _addToApplications = AddToApplicationsOffer(
+    widget.desktopIntegration,
+  );
+
+  /// Linux: the automatic update check, and the timer that runs it hourly
+  /// (it looks only once the last check is a day old).
+  late final _linuxUpdates = switch (widget.linuxUpdater) {
+    final updater? => LinuxUpdateSchedule(updater),
+    null => null,
+  };
+  Timer? _linuxUpdateTimer;
+
   @override
   void initState() {
     super.initState();
@@ -225,6 +258,19 @@ class _AppStudioAppState extends State<AppStudioApp> {
       await _onExitRequested();
     };
     unawaited(_macMenu!.install());
+    // With setup done, the start page is the first screen: offer once it is
+    // up. Otherwise the end of setup offers (`_onToolchainsChanged`).
+    if (!_needsToolchainSetup) {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _offerAddToApplications(),
+      );
+    }
+    if (_linuxUpdates != null) {
+      _linuxUpdateTimer = Timer.periodic(
+        const Duration(hours: 1),
+        (_) => _withNavigatorContext(_checkForUpdatesIfDue),
+      );
+    }
     // Clear anything a crashed install left behind. Fire and forget, so it
     // never delays launch; ToolchainSetupScreen drives the install itself.
     unawaited(widget.toolchains.collectGarbage());
@@ -286,7 +332,16 @@ class _AppStudioAppState extends State<AppStudioApp> {
         themeController: widget.themeController,
         logView: widget.logView,
         onNewProject: _showNewProjectScreen,
-        onCheckForUpdates: () => unawaited(widget.updates.checkForUpdates()),
+        onCheckForUpdates: switch (widget.linuxUpdater) {
+          final updater? => () => _withNavigatorContext(
+            (context) => checkForUpdatesOnLinux(
+              context,
+              updater,
+              onChecked: () => unawaited(widget.updates.refresh()),
+            ),
+          ),
+          null => () => unawaited(widget.updates.checkForUpdates()),
+        },
         onUninstall: _confirmUninstall,
         onAbout: _showAbout,
         canCheckForUpdates: () => widget.updates.state.canCheck,
@@ -305,9 +360,18 @@ class _AppStudioAppState extends State<AppStudioApp> {
           widget.updates,
           widget.toolchains,
           widget.previewMode,
+          widget.desktopIntegration,
         ]),
         // The compact preview is the phone frame alone.
         stripHidden: () => widget.previewMode.compactWindow,
+        desktopIntegrationStatus: () => widget.desktopIntegration.status,
+        onAddToApplications: () => _withNavigatorContext(
+          (context) => addToApplications(context, widget.desktopIntegration),
+        ),
+        onRemoveFromApplications: () => _withNavigatorContext(
+          (context) =>
+              removeFromApplications(context, widget.desktopIntegration),
+        ),
         child: child ?? const SizedBox.shrink(),
       );
 
@@ -334,9 +398,42 @@ class _AppStudioAppState extends State<AppStudioApp> {
     // current for exactly that reason: a second pop here would take `home` with
     // it and leave an empty navigator.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _clearPushedRoutes();
+      if (!mounted) return;
+      _clearPushedRoutes();
+      // After the clear, or it would take the question with it.
+      if (canOpen) _offerAddToApplications();
     });
     _syncMenu();
+  }
+
+  /// Linux, as an AppImage nobody added to the app menu: asks whether to,
+  /// once per run, over the start page and never among setup's dialogs.
+  ///
+  /// Then, on Linux, the automatic update check, so the two questions come
+  /// one after the other rather than on top of each other.
+  void _offerAddToApplications() {
+    if (!mounted) return;
+    _withNavigatorContext((context) async {
+      await _addToApplications.offerOnce(context, onStartPage: _onStartPage);
+      if (context.mounted) await _checkForUpdatesIfDue(context);
+    });
+  }
+
+  /// Whether the start page is what the window shows: no project open, no
+  /// setup, no uninstall.
+  bool _onStartPage() =>
+      mounted &&
+      widget.session.projectPath == null &&
+      !_needsToolchainSetup &&
+      _uninstalled == null;
+
+  /// Linux: the daily update check, over the start page only.
+  Future<void> _checkForUpdatesIfDue(BuildContext context) async {
+    await _linuxUpdates?.checkIfDue(
+      context,
+      onStartPage: _onStartPage,
+      onChecked: () => unawaited(widget.updates.refresh()),
+    );
   }
 
   /// Whether the first-run setup screen owns the window — see
@@ -502,6 +599,7 @@ class _AppStudioAppState extends State<AppStudioApp> {
 
   @override
   void dispose() {
+    _linuxUpdateTimer?.cancel();
     _lifecycle?.dispose();
     widget.updates.removeListener(_syncMenu);
     widget.toolchains.removeListener(_onToolchainsChanged);
@@ -529,6 +627,7 @@ class _AppStudioAppState extends State<AppStudioApp> {
     widget.themeController.dispose();
     widget.previewMode.dispose();
     widget.logView.dispose();
+    widget.desktopIntegration.dispose();
     super.dispose();
   }
 

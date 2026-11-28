@@ -1,5 +1,6 @@
 import 'package:appstudio/agent/agent_controller.dart';
 import 'package:appstudio/platform/host_platform.dart';
+import 'package:appstudio/platform/linux/desktop_integration.dart';
 import 'package:appstudio/platform/windows_app_menu.dart';
 import 'package:appstudio/process/serverpod_process.dart';
 import 'package:appstudio/session/project_session.dart';
@@ -52,6 +53,7 @@ void main() {
     bool Function()? stripHidden,
     Widget child = const SizedBox.expand(),
     HostPlatform host = HostPlatform.windows,
+    DesktopIntegrationStatus? desktopIntegration,
   }) async {
     await tester.pumpWidget(
       ShadApp(
@@ -75,6 +77,10 @@ void main() {
           changes: changes ?? ChangeNotifier(),
           stripHidden: stripHidden,
           host: host,
+          desktopIntegrationStatus:
+              desktopIntegration == null ? null : () => desktopIntegration,
+          onAddToApplications: () {},
+          onRemoveFromApplications: () {},
           child: child,
         ),
       ),
@@ -215,6 +221,66 @@ void main() {
 
     expect(find.text('About App Studio'), findsOneWidget);
     expect(find.text('Uninstall App Studio...'), findsNothing);
+  });
+
+  testWidgets('Linux offers Add to Applications for an AppImage nobody added',
+      (tester) async {
+    await pumpMenu(
+      tester,
+      host: HostPlatform.linux,
+      desktopIntegration: DesktopIntegrationStatus.notAdded,
+    );
+
+    await openMenu(tester, 'Help');
+
+    expect(find.text('Add to Applications...'), findsOneWidget);
+    expect(find.text('Remove from Applications...'), findsNothing);
+  });
+
+  testWidgets('Linux offers Remove from Applications once App Studio added it',
+      (tester) async {
+    await pumpMenu(
+      tester,
+      host: HostPlatform.linux,
+      desktopIntegration: DesktopIntegrationStatus.addedByAppStudio,
+    );
+
+    await openMenu(tester, 'Help');
+
+    expect(find.text('Remove from Applications...'), findsOneWidget);
+    expect(find.text('Add to Applications...'), findsNothing);
+  });
+
+  testWidgets('neither item shows where another tool or no AppImage is',
+      (tester) async {
+    for (final status in [
+      DesktopIntegrationStatus.managedByOther,
+      DesktopIntegrationStatus.unavailable,
+    ]) {
+      await pumpMenu(
+        tester,
+        host: HostPlatform.linux,
+        desktopIntegration: status,
+      );
+
+      await openMenu(tester, 'Help');
+
+      expect(find.text('Add to Applications...'), findsNothing);
+      expect(find.text('Remove from Applications...'), findsNothing);
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+    }
+  });
+
+  testWidgets('Windows never offers either item', (tester) async {
+    await pumpMenu(
+      tester,
+      desktopIntegration: DesktopIntegrationStatus.notAdded,
+    );
+
+    await openMenu(tester, 'Help');
+
+    expect(find.text('Add to Applications...'), findsNothing);
   });
 
   testWidgets('Linux binds the same Ctrl shortcuts', (tester) async {
