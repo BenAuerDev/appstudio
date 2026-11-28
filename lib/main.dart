@@ -41,6 +41,7 @@ import 'ui/uninstall/uninstalled_screen.dart';
 import 'uninstall/uninstaller.dart';
 import 'ui/toolchain/toolchain_setup_screen.dart';
 import 'ui/studio_shell.dart';
+import 'widgets/nothing_pushed.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -420,12 +421,16 @@ class _AppStudioAppState extends State<AppStudioApp> {
   }
 
   /// Whether the start page is what the window shows: no project open, no
-  /// setup, no uninstall.
+  /// setup, no uninstall, and nothing pushed over it. New Project and
+  /// Settings are routes over the start page, and a question raised over
+  /// them could quit the app in the middle of `serverpod create` or a tool
+  /// install.
   bool _onStartPage() =>
       mounted &&
       widget.session.projectPath == null &&
       !_needsToolchainSetup &&
-      _uninstalled == null;
+      _uninstalled == null &&
+      nothingPushedOver(_navigatorKey);
 
   /// Linux: the daily update check, over the start page only.
   Future<void> _checkForUpdatesIfDue(BuildContext context) async {
