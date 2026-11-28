@@ -525,6 +525,58 @@ Exec=appstudio --extra
     );
   });
 
+  // The sticky-folder rule (a shared folder such as /tmp holding someone
+  // else's file) needs a second user to set up, so only the write
+  // permission is tested here.
+  group('a folder the file cannot be taken out of', () {
+    test(
+      'is said up front, where Add can only copy',
+      () async {
+        final uid = await Process.run('id', ['-u']);
+        if ('${uid.stdout}'.trim() == '0') {
+          markTestSkipped('root can take files out of any folder');
+          return;
+        }
+        final folder = p.dirname(appImage);
+        expect(await integration().keepsOriginal(), isFalse);
+
+        await Process.run('chmod', ['555', folder]);
+        addTearDown(() => Process.run('chmod', ['755', folder]));
+
+        expect(await integration().keepsOriginal(), isTrue);
+      },
+      tags: 'process',
+      testOn: 'linux',
+    );
+
+    test(
+      'writes nothing to the folder it asks about',
+      () async {
+        final folder = Directory(p.dirname(appImage));
+        final backdated = await Process.run('touch', [
+          '-t',
+          '200001010000',
+          folder.path,
+        ]);
+        expect(backdated.exitCode, 0);
+
+        await integration().keepsOriginal();
+
+        expect((await folder.stat()).modified.year, 2000);
+        expect(await folder.list().map((e) => p.basename(e.path)).toList(), [
+          p.basename(appImage),
+        ]);
+      },
+      tags: 'process',
+      testOn: '!windows',
+    );
+
+    test('is not a question for a file in ~/AppImages already', () async {
+      await integration().add();
+      expect(await integration().keepsOriginal(), isFalse);
+    });
+  });
+
   group('a file already at the target', () {
     test('is named when Add would replace it', () async {
       await File(target()).create(recursive: true);

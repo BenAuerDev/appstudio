@@ -107,6 +107,20 @@ void main() {
     expect(await declined(), isTrue);
   });
 
+  testWidgets('says the original stays where Add can only copy it', (
+    tester,
+  ) async {
+    desktop.keeps = true;
+    await offer(tester);
+
+    expect(find.textContaining('with a copy of the file in'), findsOneWidget);
+    expect(
+      find.textContaining('stays, since App Studio cannot move it'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('the file moves'), findsNothing);
+  });
+
   testWidgets('a file already at the target is named', (tester) async {
     desktop.replaces = true;
     await offer(tester);
@@ -224,6 +238,7 @@ class _FakeIntegration extends DesktopIntegration {
   DesktopIntegrationStatus current = DesktopIntegrationStatus.notAdded;
   bool removeFails = false;
   bool replaces = false;
+  bool keeps = false;
   bool openFails = false;
   OtherCopy? copy;
   int added = 0;
@@ -241,6 +256,9 @@ class _FakeIntegration extends DesktopIntegration {
   @override
   String get addedAppImagePath =>
       '/home/alex/AppImages/AppStudio-x86_64.AppImage';
+
+  @override
+  Future<bool> keepsOriginal() async => keeps;
 
   @override
   Future<bool> replacesAnotherFile() async => replaces;

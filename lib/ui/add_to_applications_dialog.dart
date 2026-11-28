@@ -29,6 +29,7 @@ class AddToApplicationsDialog extends StatefulWidget {
     super.key,
     required this.onAdd,
     this.currentFolder,
+    this.keepsOriginal = false,
     this.replacedFile,
     this.offerDontAskAgain = true,
   });
@@ -39,6 +40,10 @@ class AddToApplicationsDialog extends StatefulWidget {
   /// The folder the AppImage is in now, named in the text because Add moves
   /// it. Null when it is already in `~/AppImages`.
   final String? currentFolder;
+
+  /// Add can only copy the file out of [currentFolder] (a folder App Studio
+  /// cannot take it out of), so the original stays and the text says so.
+  final bool keepsOriginal;
 
   /// Another file at the path Add moves this one to, left there by an
   /// earlier Add. It may be a newer build, so the question says Add replaces
@@ -103,10 +108,16 @@ class _AddToApplicationsDialogState extends State<AddToApplicationsDialog> {
       title: const Text('Add App Studio to your applications?'),
       description: Text(
         [
-          folder == null
-              ? 'App Studio will appear in your app menu.'
-              : 'App Studio will appear in your app menu, and the file moves '
-                    'from ${prettyPath(folder)} to ~/AppImages.',
+          switch ((folder, widget.keepsOriginal)) {
+            (null, _) => 'App Studio will appear in your app menu.',
+            (final folder?, false) =>
+              'App Studio will appear in your app menu, and the file moves '
+                  'from ${prettyPath(folder)} to ~/AppImages.',
+            (final folder?, true) =>
+              'App Studio will appear in your app menu, with a copy of the '
+                  'file in ~/AppImages. The one in ${prettyPath(folder)} '
+                  'stays, since App Studio cannot move it from there.',
+          },
           if (widget.replacedFile case final replaced?)
             'It replaces the App Studio already at ${prettyPath(replaced)}.',
         ].join(' '),
@@ -180,6 +191,7 @@ class ReplaceAddedCopyDialog extends StatefulWidget {
     required this.added,
     required this.onReplace,
     this.currentFolder,
+    this.keepsOriginal = false,
   });
 
   final AppVersion running;
@@ -189,6 +201,10 @@ class ReplaceAddedCopyDialog extends StatefulWidget {
   /// The folder this copy is in, which Replace moves it out of. Null when it
   /// is in `~/AppImages` already.
   final String? currentFolder;
+
+  /// Replace can only copy this file out of [currentFolder], so it stays
+  /// there and the text says so.
+  final bool keepsOriginal;
 
   @override
   State<ReplaceAddedCopyDialog> createState() => _ReplaceAddedCopyDialogState();
@@ -225,9 +241,13 @@ class _ReplaceAddedCopyDialogState extends State<ReplaceAddedCopyDialog> {
       title: Text('Replace App Studio $added with this version?'),
       description: Text(
         'This copy is App Studio $running, newer than the $added in your app '
-        'menu. ${folder == null ? 'Replace puts it' : 'Replace moves it from '
-                  '${prettyPath(folder)} to ~/AppImages,'} in place of the older '
-        'one.',
+        'menu. ${switch ((folder, widget.keepsOriginal)) {
+          (null, _) => 'Replace puts it',
+          (final folder?, false) => 'Replace moves it from '
+              '${prettyPath(folder)} to ~/AppImages,',
+          (final folder?, true) => 'Replace puts a copy of it from '
+              '${prettyPath(folder)} into ~/AppImages,',
+        }} in place of the older one.',
       ),
       actions: [
         ShadButton.outline(

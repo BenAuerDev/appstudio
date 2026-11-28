@@ -68,6 +68,7 @@ Future<void> maybeOfferAddToApplications(
   final prefs = await SharedPreferences.getInstance();
   if (prefs.getBool(kAddToApplicationsDeclinedKey) ?? false) return;
   final folder = await integration.integration.currentFolder();
+  final keepsOriginal = await integration.integration.keepsOriginal();
   final replaced = await integration.integration.replacesAnotherFile()
       ? integration.integration.addedAppImagePath
       : null;
@@ -77,6 +78,7 @@ Future<void> maybeOfferAddToApplications(
     integration,
     fromMenu: false,
     currentFolder: folder,
+    keepsOriginal: keepsOriginal,
     replacedFile: replaced,
   );
   if (answer == AddToApplicationsAnswer.never) {
@@ -92,6 +94,7 @@ Future<void> addToApplications(
   await integration.refresh();
   if (integration.status != DesktopIntegrationStatus.notAdded) return;
   final folder = await integration.integration.currentFolder();
+  final keepsOriginal = await integration.integration.keepsOriginal();
   final replaced = await integration.integration.replacesAnotherFile()
       ? integration.integration.addedAppImagePath
       : null;
@@ -101,6 +104,7 @@ Future<void> addToApplications(
     integration,
     fromMenu: true,
     currentFolder: folder,
+    keepsOriginal: keepsOriginal,
     replacedFile: replaced,
   );
 }
@@ -110,6 +114,7 @@ Future<AddToApplicationsAnswer?> _showAddDialog(
   DesktopIntegrationController integration, {
   required bool fromMenu,
   required String? currentFolder,
+  required bool keepsOriginal,
   required String? replacedFile,
 }) async {
   final answer = await showAppDialog<AddToApplicationsAnswer>(
@@ -120,6 +125,7 @@ Future<AddToApplicationsAnswer?> _showAddDialog(
     builder: (context) => AddToApplicationsDialog(
       onAdd: integration.add,
       currentFolder: currentFolder,
+      keepsOriginal: keepsOriginal,
       replacedFile: replacedFile,
       offerDontAskAgain: !fromMenu,
     ),
@@ -178,8 +184,11 @@ Future<void> _offerForOtherCopy(
 }) async {
   final desktop = integration.integration;
   final copy = await desktop.otherCopy();
+  if (copy == null) return;
   final folder = await desktop.currentFolder();
-  if (copy == null || !context.mounted || !onStartPage()) return;
+  // Only the Replace question names the folder this copy is in.
+  final keepsOriginal = copy.runningIsNewer && await desktop.keepsOriginal();
+  if (!context.mounted || !onStartPage()) return;
   final toaster = ShadToaster.maybeOf(context);
 
   if (copy.runningIsNewer) {
@@ -191,6 +200,7 @@ Future<void> _offerForOtherCopy(
         added: copy.added,
         onReplace: integration.add,
         currentFolder: folder,
+        keepsOriginal: keepsOriginal,
       ),
     );
     if (replaced == true) {
