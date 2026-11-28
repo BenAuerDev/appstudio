@@ -1,3 +1,4 @@
+import 'package:appstudio/platform/linux/app_version.dart';
 import 'package:appstudio/update/linux/appcast.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -79,6 +80,21 @@ void main() {
       current: 25,
     );
     expect(update!.version.build, 26);
+  });
+
+  test('leaves out an item whose version is not a version', () {
+    // The feed is not signed and the version ends up in the app menu's
+    // entry, where a line break would start a key of its own.
+    final update = newestUpdate(
+      feed(
+        item(build: 30, version: '0.4.3&#10;Exec=/tmp/x') +
+            item(build: 31, version: '') +
+            item(build: 32, version: '0.4.5 beta') +
+            item(build: 26, version: '0.4.2-beta.1'),
+      ),
+      current: 25,
+    );
+    expect(update!.version, const AppVersion('0.4.2-beta.1', 26));
   });
 
   test('reads the namespace, not the prefix', () {

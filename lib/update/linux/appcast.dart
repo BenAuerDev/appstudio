@@ -79,6 +79,12 @@ AppcastItem? newestUpdate(String feed, {required int current}) {
   return newest;
 }
 
+/// What a version may look like: `0.4.2`, `1.0.0-beta.1`. The feed is not
+/// signed, only the file is, and the version is written into the app menu's
+/// entry, so anything else (a newline above all) is refused rather than
+/// escaped.
+final _versionPattern = RegExp(r'^[0-9A-Za-z][0-9A-Za-z.+-]{0,63}$');
+
 AppcastItem? _parse(XmlElement item) {
   final enclosure = item.findElements('enclosure').firstOrNull;
   if (enclosure == null) return null;
@@ -98,7 +104,7 @@ AppcastItem? _parse(XmlElement item) {
   final signature = sparkle('edSignature');
   if (build == null ||
       version == null ||
-      version.isEmpty ||
+      !_versionPattern.hasMatch(version) ||
       url == null ||
       !url.hasScheme ||
       length == null ||
