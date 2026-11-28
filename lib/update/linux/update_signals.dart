@@ -2,11 +2,20 @@
 /// free of `dart:io`, so the dialog can use it.
 library;
 
-/// Asked between chunks of a download, which stops when it says so.
+import 'dart:async';
+
+/// Stops a download: at once, even while it waits on a server that has
+/// stopped sending.
 class UpdateCancellation {
-  bool _cancelled = false;
-  bool get isCancelled => _cancelled;
-  void cancel() => _cancelled = true;
+  final _completer = Completer<void>();
+  bool get isCancelled => _completer.isCompleted;
+
+  /// Completes when [cancel] is called.
+  Future<void> get whenCancelled => _completer.future;
+
+  void cancel() {
+    if (!_completer.isCompleted) _completer.complete();
+  }
 }
 
 /// The new AppImage is in place, but App Studio could not start it: there

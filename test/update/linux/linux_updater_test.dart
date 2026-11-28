@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -94,6 +95,7 @@ void main() {
   LinuxUpdater updater({
     LinuxUpdateConfig? config,
     Map<String, String>? environment,
+    http.Client? httpClient,
   }) {
     final e = environment ?? env;
     final executable = p.join(appDir, 'usr', 'lib', 'appstudio', 'appstudio');
@@ -106,7 +108,7 @@ void main() {
           ),
       environment: e,
       executable: executable,
-      client: client(),
+      client: httpClient ?? client(),
       runningVersion: () async => running,
       desktop: DesktopIntegration(
         environment: e,
@@ -385,6 +387,58 @@ void main() {
       );
       expect(verified, isNull);
       expect(await File(part()).exists(), isFalse);
+    });
+
+    test(
+      'stops at once when cancelled while the server sends nothing',
+      () async {
+        // One chunk, then silence: the stream never ends, and the download
+        // would otherwise wait out its 60 s timeout and report a failure.
+        final stalled = StreamController<List<int>>();
+        addTearDown(stalled.close);
+        stalled.add(newer.sublist(0, 8));
+        final cancellation = UpdateCancellation();
+        final verified =
+            await updater(
+                  httpClient: MockClient.streaming(
+                    (_, _) async => http.StreamedResponse(stalled.stream, 200),
+                  ),
+                )
+                .download(
+                  await item(),
+                  cancellation: cancellation,
+                  onProgress: (_, _) => Timer(
+                    const Duration(milliseconds: 50),
+                    cancellation.cancel,
+                  ),
+                )
+                .timeout(const Duration(seconds: 5));
+        expect(verified, isNull);
+        expect(await File(part()).exists(), isFalse);
+      },
+    );
+
+    test('stops at once when cancelled while connecting', () async {
+      final never = Completer<http.StreamedResponse>();
+      final cancellation = UpdateCancellation();
+      Timer(const Duration(milliseconds: 50), cancellation.cancel);
+      final verified =
+          await updater(
+                httpClient: MockClient.streaming((_, _) => never.future),
+              )
+              .download(await item(), cancellation: cancellation)
+              .timeout(const Duration(seconds: 5));
+      expect(verified, isNull);
+      expect(await File(part()).exists(), isFalse);
+
+      // The response turns up after all: its body is let go, so the
+      // connection does not stay open.
+      final body = StreamController<List<int>>();
+      final released = Completer<void>();
+      body.onCancel = released.complete;
+      body.onListen = () {};
+      never.complete(http.StreamedResponse(body.stream, 200));
+      await released.future.timeout(const Duration(seconds: 5));
     });
 
     test('says so where the AppImage cannot be replaced', () async {

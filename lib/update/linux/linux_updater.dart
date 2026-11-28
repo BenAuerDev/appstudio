@@ -289,25 +289,39 @@ class LinuxUpdater {
       );
     }
 
+    // One listener for the whole download, not one per chunk.
+    final cancelled = cancellation?.whenCancelled.then<Null>((_) => null);
     var complete = false;
     try {
-      final response = await _client
-          .send(http.Request('GET', item.url))
-          .timeout(const Duration(seconds: 30));
+      final response = await _orCancelled(
+        _client
+            .send(http.Request('GET', item.url))
+            .timeout(const Duration(seconds: 30)),
+        cancelled,
+        // A response that arrives after Cancel would hold its connection
+        // open: nobody reads its body.
+        dropLate: (late) => late.stream.listen(null).cancel(),
+      );
+      if (response == null) return null;
       if (response.statusCode != 200) {
         throw LinuxUpdateException(
           'The download answered ${response.statusCode}.',
         );
       }
       var received = 0;
-      await for (final chunk in response.stream.timeout(
-        const Duration(seconds: 60),
-      )) {
-        if (cancellation?.isCancelled ?? false) break;
-        received += chunk.length;
-        if (received > item.length) break;
-        sink.add(chunk);
-        onProgress?.call(received, item.length);
+      final chunks = StreamIterator(
+        response.stream.timeout(const Duration(seconds: 60)),
+      );
+      try {
+        while (await _orCancelled(chunks.moveNext(), cancelled) ?? false) {
+          final chunk = chunks.current;
+          received += chunk.length;
+          if (received > item.length) break;
+          sink.add(chunk);
+          onProgress?.call(received, item.length);
+        }
+      } finally {
+        await chunks.cancel();
       }
       await sink.close();
       if (cancellation?.isCancelled ?? false) return null;
@@ -341,6 +355,7 @@ class LinuxUpdater {
       complete = true;
       return VerifiedUpdate._(part.path, item);
     } on TimeoutException {
+      if (cancellation?.isCancelled ?? false) return null;
       throw const LinuxUpdateException('The download stopped answering.');
     } on LinuxUpdateException {
       rethrow;
@@ -430,4 +445,22 @@ Future<bool> verifyEd25519File(
       publicKey: SimplePublicKey(keyBytes, type: KeyPairType.ed25519),
     ),
   );
+}
+
+/// [future]'s value, or null as soon as [cancelled] completes. A value
+/// [future] gives after that goes to [dropLate], and an error it raises is
+/// dropped: nobody is waiting for either.
+Future<T?> _orCancelled<T>(
+  Future<T> future,
+  Future<Null>? cancelled, {
+  void Function(T late)? dropLate,
+}) {
+  if (cancelled == null) return future;
+  var settled = false;
+  // Registered before the race's own listeners, so a value that wins the
+  // race arrives here first, while settled is still false.
+  future.then<void>((value) {
+    if (settled) dropLate?.call(value);
+  }, onError: (Object _) {});
+  return Future.any<T?>([future, cancelled]).whenComplete(() => settled = true);
 }
