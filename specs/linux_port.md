@@ -3,6 +3,8 @@
 Status: **agreed with Serverpod on 2026-11-25** (scope, the five PRs and the
 Tuesday milestone). The details per subsystem below are the working plan.
 Date: 2026-11-26. Baseline: `main` @ `6b3686c`, App Studio 0.4.0+24.
+Updated 2026-11-28 to what was built: where the build differs from the plan,
+the section says so.
 
 ## The plan in short
 
@@ -16,9 +18,15 @@ Five PRs, each merged into `linux/port` once tested:
 | 4 | **Packaging** | AppImage, `.deb`, `.rpm`, reusing an existing Flutter Linux packaging setup, including AppImage updates through Gear Lever |
 | 5 | **Polish** | "Open in…" editors, notifications, uninstall |
 
-**CI, the release pipeline and auto-updates run on Serverpod's
-infrastructure, so Serverpod owns them.** This port delivers the build
-scripts.
+**Since then:** PR 4 became the AppImage alone, followed by a step that
+adds it to the app menu and lets it update itself in place
+(`specs/linux_appimage.md`, parts A and B). The `.deb` and `.rpm` are not
+built: in-app updates cover what they were for, so they follow only if
+Serverpod asks for them.
+
+**CI, the release pipeline and the update feed (its hosting, URL and signing
+key) run on Serverpod's infrastructure, so Serverpod owns them.** This port
+delivers the build scripts and the updater inside the app.
 
 Estimate: 15–25 hours.
 
@@ -81,7 +89,8 @@ with Windows read as "macOS and Windows":
   scattered around the code.
 - **The existing suite stays green on macOS and Windows at every step.**
 - **Native code shared with macOS or Windows** (`packages/webview_cef/common/`)
-  is changed only behind `OS_LINUX` / `__linux__` guards.
+  is changed only behind `OS_LINUX` / `__linux__` guards, or where the change
+  is behaviour-neutral on all three (a null check, say).
 - **The macOS and Windows release tooling is not touched.**
 
 **Branches.** The work happens on a fork. `linux/port` is the root branch,
@@ -174,7 +183,7 @@ macOS paths and commands:
 |---|---|---|
 | M1 | The `linux/` Flutter runner (`.metadata` lists only `root`, `macos`, `windows`). | 1 |
 | M2 | CEF hooks in that runner, wired by hand (section 2). | 1 |
-| M3 | Window close → teardown on GTK (to verify, 4.2). | 1 |
+| M3 | Window close → teardown on GTK (done, 4.2). | 1 |
 | M4 | Packaging: AppImage, `.deb`, `.rpm`, a `.desktop` file, the icon. | 4 |
 
 ---
@@ -199,18 +208,24 @@ App data and preferences share one folder (L5), so uninstall is one delete.
 
 - `flutter create --platforms=linux --org dev.serverpod .`, then commit
   `linux/`. `APPLICATION_ID` `dev.serverpod.appstudio`, binary
-  `appstudio`, window title "App Studio", 1280×800, minimum 670×720 (in step
-  with `kMinAppWindowSize`).
+  `appstudio`, window title "App Studio", 1280×800, minimum 670×600 (in step
+  with `kMinAppWindowSize`): Windows' minimum, since 720 high does not fit a
+  1080p laptop screen at 150%. A tiling window manager ignores both.
 - **CEF hooks by hand**: `initCEFProcesses(argc, argv)` first in `main()`,
   so helper processes return before GTK starts; the key press and release
   handlers on the `FlView`. Without them the app does not run at all, which
   is why they are in PR 1 and the rest of the CEF work is in PR 3.
-- **Window close → teardown, to verify first.** On Windows the close
-  skipped `onExitRequested` because CEF keeps hidden top-level windows. On
-  GTK, the check is: does clicking close (and Super+Q on Hyprland) run the
-  teardown that stops the runner? If not, the runner's `delete-event`
-  handler asks Dart over `dev.serverpod.appstudio/lifecycle`, the channel
-  Windows already uses (`window_close.dart`).
+- **Window close → teardown.** On GTK every way out reaches
+  `onExitRequested`: the close button, the window manager's close (Super+Q
+  on Hyprland), File → Quit and Ctrl+Q. No `delete-event` handler was
+  needed. Two things did need fixing:
+  - A second exit request while the teardown runs waits for it, at most
+    15 s (`_kLinuxExitWait` in `main.dart`), instead of quitting before the
+    server has stopped. macOS and Windows still answer at once.
+  - `linux/runner/main.cc` ends with `_exit()` after `g_application_run`.
+    Flutter's Linux quit leaves the engine running, and a normal `exit()`
+    raced Mesa's exit handlers against the raster thread and crashed about
+    one quit in four.
 - **Menus (F10):** mount the Windows shad menu strip (`windows_app_menu.dart`)
   on Linux too. Same commands, same Ctrl shortcuts, same enable rules.
 - **Shortcut hints (F11):** `shortcutHint()` gives the Ctrl form on Linux.
@@ -259,7 +274,8 @@ App data and preferences share one folder (L5), so uninstall is one delete.
 
 ### 4.4 The preview (PR 3)
 
-All in `packages/webview_cef/linux/`, or behind `__linux__` in `common/`:
+All in `packages/webview_cef/linux/`, or behind `__linux__` in `common/`
+unless the change is behaviour-neutral on all three:
 
 - **Auto-setup:** take `modify_target.sh` out of the plugin's CMake. The
   hooks live in the runner (PR 1), and the script is what breaks on current
@@ -268,7 +284,18 @@ All in `packages/webview_cef/linux/`, or behind `__linux__` in `common/`:
   it from the runner with `<app data>/CEF` before CEF starts.
 - **Shortcuts:** with the preview focused, the page gets the keys, but Ctrl
   on any other character key stays App Studio's shortcut, as on Windows.
-  Ctrl+X/C/V/A/Z go to the page as edit commands.
+  Ctrl+A/C/V/X/Y/Z stay with the page.
+- **Clipboard, through GTK.** On Wayland only a window with keyboard focus
+  may use the clipboard, and CEF draws off-screen, so it never has focus:
+  its copies stayed inside Chromium and it never saw what others copied.
+  The plugin carries the text across itself. Ctrl+C and Ctrl+X put the
+  page's selection on the clipboard, and Ctrl+V types the clipboard's text
+  into the page, as an input method would. Two limits follow:
+  - The page gets no paste event, so a page that reads paste events (an
+    image, rich text) gets nothing.
+  - Only a selection Chromium sees is copied. A copy made by the page's own
+    code (`Clipboard.setData`, Flutter web's `SelectionArea`) does not reach
+    other programs.
 - **Frame buffer:** the memory bug from the spike.
 - **The `xclip` workaround:** remove it (not needed, section 2).
 - **End to end:** hard reload and the project-switch clear
@@ -277,13 +304,17 @@ All in `packages/webview_cef/linux/`, or behind `__linux__` in `common/`:
 
 ### 4.5 Packaging (PR 4)
 
-- **AppImage first** (Tuesday), built on the dev machine, from an existing
-  Flutter Linux AppImage setup with zsync update info, so Gear Lever can
-  update it. The CEF helpers must resolve their own paths inside the
-  mounted image; check that early.
-- **`.deb`, then `.rpm`:** dependencies on git, curl, unzip and xz, plus
-  CEF's runtime libraries (libnss3, libgbm1, libasound2 and the rest; to
-  list from `ldd` on the bundle).
+- **AppImage** (Tuesday), built on the dev machine by `make appimage`
+  (`tool/linux/build_appimage.sh`), from an existing Flutter Linux AppImage
+  setup. The CEF helpers resolve their own paths inside the mounted image.
+- **Updates come from inside the app** (`specs/linux_appimage.md` part B):
+  a signed feed that `tool/linux/appcast.sh` writes, and the feed and key
+  in `linux/release.json`. zsync update information for Gear Lever is still
+  possible (`APPIMAGE_UPDATE_INFO`) but off unless the build is given it.
+- **`.deb` and `.rpm`: not built**, only if asked (see the plan in short).
+  They would declare git, curl, unzip and xz, plus CEF's runtime libraries
+  (libnss3, libgbm1, libasound2 and the rest; to list from `ldd` on the
+  bundle).
 - **Every format:** a `.desktop` file with `StartupWMClass` matching the GTK
   application id, so the dock and window match; the icon in hicolor sizes.
 - **Size:** strip the bundle (1.5 GB unstripped). The macOS app is 350 MB
@@ -342,8 +373,8 @@ macOS and Windows CI green.
 
 ### PR 4: Packaging (`linux/4-packaging`)
 
-- The AppImage for Tuesday (4.5); the `.deb` if time allows; the `.rpm`
-  later.
+- The AppImage for Tuesday (4.5). Then, in `linux/4b-appimage`, Add to
+  Applications and in-app updates. No `.deb` or `.rpm` unless asked.
 - Done when (Tuesday): the AppImage runs on Ubuntu and on Omarchy and passes
   the smoke checklist (section 6).
 
@@ -353,8 +384,8 @@ macOS and Windows CI green.
 
 ### Serverpod's side
 
-- CI (a Linux job, if wanted), the release pipeline, hosting and
-  auto-updates, using the build scripts from PR 4.
+- CI (a Linux job, if wanted), the release pipeline, and the update feed's
+  hosting and signing key, using the build scripts from PR 4.
 
 ---
 
@@ -401,10 +432,9 @@ macOS and Windows CI green.
 
 For Serverpod, since updates and releases are theirs:
 
-1. **Updates.** The AppImage carries zsync update info, so Gear Lever (and
-   AppImageUpdate) can update it from wherever Serverpod hosts it. Is that
-   enough, or should updates go through apt/dnf repositories (which need GPG
-   signing and hosting)?
+1. **Updates.** App Studio updates the AppImage itself from a signed feed.
+   Where is it hosted, and who holds the signing key? Are `.deb` and `.rpm`
+   wanted on top?
 2. **Ubuntu baseline.** 24.04 LTS?
 
 ---
@@ -414,7 +444,7 @@ For Serverpod, since updates and releases are theirs:
 | What | Why | How |
 |---|---|---|
 | Flutter ≥ 3.44 (stable) | Host SDK for building App Studio | any stable SDK on `PATH`; not in `~/develop/flutter`, which is where App Studio installs its own |
-| Flutter's Linux desktop dependencies | `flutter build linux` | Ubuntu: `sudo apt install clang cmake ninja-build pkg-config libgtk-3-dev`; Arch: `sudo pacman -S --needed clang cmake ninja pkgconf gtk3` |
+| Flutter's Linux desktop dependencies | `flutter build linux` | Ubuntu: `sudo apt install clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev`; Arch: `sudo pacman -S --needed clang cmake ninja pkgconf gtk3` |
 | git, curl, unzip, xz | Flutter itself, and App Studio's own setup check | usually there already |
 | ~2 GB free and network on the first build | CEF downloads during the first CMake configure | — |
 
@@ -428,14 +458,15 @@ laptop with a fresh Ubuntu covers the AppImage on a clean system.
 
 Tuesday:
 
-- [ ] PR 1: App runs
-- [ ] PR 2: Setup works
-- [ ] PR 3: Preview works
-- [ ] AppImage runs on Ubuntu (smoke checklist)
-- [ ] AppImage runs on Omarchy (smoke checklist)
+- [x] PR 1: App runs
+- [x] PR 2: Setup works
+- [x] PR 3: Preview works
+- [x] AppImage runs on Ubuntu (smoke checklist)
+- [x] AppImage runs on Omarchy (smoke checklist)
 
 After Tuesday:
 
-- [ ] PR 4: `.deb` and `.rpm`
+- [x] AppImage: Add to Applications and in-app updates
+- [ ] `.deb` and `.rpm`, only if asked
 - [ ] PR 5: Polish ("Open in…" editors, notifications, uninstall)
 - [ ] Build scripts handed over for Serverpod's CI and release pipeline

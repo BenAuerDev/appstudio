@@ -209,8 +209,8 @@ promote:
 # ---------------------------------------------------------------------------
 # Linux
 #
-# Builds on the machine it runs on and uploads nothing: hosting, updates and
-# the release pipeline are Serverpod's. CEF downloads during the first CMake
+# Builds on the machine it runs on and uploads nothing: hosting, the update
+# feed and the release pipeline are Serverpod's. CEF downloads during the first CMake
 # configure, so there is no deps step. FLUTTER, SKIP_BUILD, APPIMAGETOOL,
 # APPIMAGE_UPDATE_INFO and APPIMAGE_FILE_URL are read from the environment;
 # see the script.
