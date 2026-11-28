@@ -170,13 +170,6 @@ class RemoveFromApplicationsDialog extends StatelessWidget {
   }
 }
 
-/// A version for these dialogs: `0.4.2`, with the build when both copies
-/// share the version and only the build tells them apart.
-String copyVersionLabel(AppVersion version, AppVersion other) =>
-    version.version == other.version
-    ? '${version.version} (build ${version.build})'
-    : version.version;
-
 /// This copy is newer than the one App Studio added to the app menu: offers
 /// to put it in that one's place. Runs [onReplace] itself and stays open on
 /// failure, as [AddToApplicationsDialog] does. Pops true once replaced.

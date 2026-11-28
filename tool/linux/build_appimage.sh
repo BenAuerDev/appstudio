@@ -9,6 +9,7 @@
 # Optional environment:
 #   FLUTTER               the flutter to build with (default: flutter on PATH)
 #   SKIP_BUILD=1          package the release build that is already there
+#                         (with the update feed it was built with)
 #   APPIMAGETOOL          path to appimagetool; the pinned release is
 #                         downloaded into build/linux/tools if unset
 #   APPIMAGE_UPDATE_INFO  update information for AppImageUpdate and Gear Lever,
@@ -18,6 +19,12 @@
 #                         that fixed URL. Gear Lever offers an update whenever
 #                         the .zsync's SHA-1 differs from the installed
 #                         file's; it does not compare versions.
+#   APPSTUDIO_APPCAST_URL, APPSTUDIO_EDDSA_PUBLIC_KEY
+#                         the update feed and the public key that checks its
+#                         downloads, compiled in. They come from
+#                         linux/release.json (appcastUrl, eddsaPublicKey);
+#                         set here they override it, for a local feed. Empty,
+#                         the build reports updates as unavailable.
 #   APPIMAGE_FILE_URL     where this AppImage will be downloaded from, written
 #                         into the .zsync, e.g. "https://<host>/releases/linux/
 #                         <version>/b<build>/AppStudio-<version>-x86_64.AppImage".
@@ -59,6 +66,52 @@ if (( ${#missing[@]} )); then
   exit 1
 fi
 
+# --- Update feed -----------------------------------------------------------
+
+# From linux/release.json unless the environment overrides it, as
+# windows/release.json does for Windows. In-app updates need both.
+read_release() {
+  python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get(sys.argv[2], ""))' \
+    "$root/linux/release.json" "$1"
+}
+appcast_url="${APPSTUDIO_APPCAST_URL:-$(read_release appcastUrl)}"
+eddsa_public_key="${APPSTUDIO_EDDSA_PUBLIC_KEY:-$(read_release eddsaPublicKey)}"
+# https only, as the app itself insists: the signature covers the file, not
+# the feed. Plain http is allowed to this machine or a private address, for
+# a local feed.
+secure_url() {
+  python3 -c '
+import ipaddress, re, sys, urllib.parse
+# The same rule as isSecureUpdateUrl in lib/update/linux/appcast.dart.
+u = urllib.parse.urlsplit(sys.argv[1])
+host = u.hostname or ""
+if u.scheme.lower() == "https" and host:
+    sys.exit(0)
+if u.scheme.lower() != "http":
+    sys.exit(1)
+if host in ("localhost", "::1"):
+    sys.exit(0)
+octet = r"(0|[1-9][0-9]{0,2})"
+if not re.fullmatch(rf"{octet}(\.{octet}){{3}}", host):
+    sys.exit(1)
+try:
+    ip = ipaddress.IPv4Address(host)
+except ValueError:
+    sys.exit(1)
+nets = ("127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+sys.exit(0 if any(ip in ipaddress.ip_network(n) for n in nets) else 1)' "$1"
+}
+if [[ -n "$appcast_url" ]] && ! secure_url "$appcast_url"; then
+  echo "The update feed must be an https address: $appcast_url" >&2
+  exit 1
+fi
+if [[ -n "$eddsa_public_key" ]] &&
+  ! python3 -c 'import base64, sys; sys.exit(len(base64.b64decode(sys.argv[1], validate=True)) != 32)' \
+    "$eddsa_public_key" 2> /dev/null; then
+  echo "The update public key is not base64 of 32 bytes." >&2
+  exit 1
+fi
+
 # --- Build -----------------------------------------------------------------
 
 if [[ "${SKIP_BUILD:-}" != 1 ]]; then
@@ -74,7 +127,14 @@ if [[ "${SKIP_BUILD:-}" != 1 ]]; then
       windows/flutter/generated_plugins.cmake
   }
   trap restore_generated EXIT
-  (cd "$root" && "$flutter" build linux --release)
+  if [[ -n "$appcast_url" && -n "$eddsa_public_key" ]]; then
+    echo "In-app updates from $appcast_url"
+  else
+    echo "In-app updates off: no feed or no key (linux/release.json)"
+  fi
+  (cd "$root" && "$flutter" build linux --release \
+    --dart-define="APPSTUDIO_APPCAST_URL=$appcast_url" \
+    --dart-define="APPSTUDIO_EDDSA_PUBLIC_KEY=$eddsa_public_key")
   restore_generated
   trap - EXIT
 fi

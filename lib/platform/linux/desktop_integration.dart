@@ -7,6 +7,7 @@ import 'package:path/path.dart' as p;
 import '../host.dart';
 import 'app_version.dart';
 import 'desktop_integration_status.dart';
+import 'running_app_image.dart';
 
 export 'app_version.dart';
 export 'desktop_integration_status.dart';
@@ -192,14 +193,7 @@ class DesktopIntegration {
   }
 
   Future<DesktopIntegrationStatus> status() async {
-    final appDir = _appDir;
-    if (!host.isLinux || _appImage == null || appDir == null) {
-      return DesktopIntegrationStatus.unavailable;
-    }
-    // Children inherit `$APPIMAGE` and `$APPDIR`: a development build started
-    // from a terminal inside another AppImage (an editor, say) sees that
-    // one's. Only an executable inside the mount is this AppImage.
-    if (!p.isWithin(appDir, _executable)) {
+    if (!host.isLinux || runningAppImage(environment, _executable) == null) {
       return DesktopIntegrationStatus.unavailable;
     }
     final entryPath = _entryPath;
@@ -380,17 +374,53 @@ class DesktopIntegration {
   /// compared with the next download, a wrong one could offer to replace a
   /// newer copy with an older one. Without it, no copy is compared until the
   /// next Add writes the entry again. Best effort, like the cleanup before.
-  Future<void> _forgetRecordedVersion(String entryPath) async {
+  Future<void> _forgetRecordedVersion(String entryPath) =>
+      _setRecordedVersion(entryPath, null);
+
+  /// After an update replaced [appImagePath] in place: App Studio's entry,
+  /// when it names that file, records [version] from now on, so another
+  /// copy is compared with the build that is really there. Best effort.
+  Future<void> recordUpdatedVersion(
+    String appImagePath,
+    AppVersion version,
+  ) async {
+    final entryPath = _entryPath;
+    if (entryPath == null) return;
+    final entry = await _readEntry(entryPath);
+    if (entry == null || !_isOurs(entry)) return;
+    final tryExec = entry['TryExec'];
+    if (tryExec == null || !p.equals(tryExec, appImagePath)) return;
+    await _setRecordedVersion(entryPath, version);
+  }
+
+  /// The version App Studio's entry records for [appImagePath], or null
+  /// when there is no entry of App Studio's naming that file, or no version.
+  Future<AppVersion?> recordedVersionOf(String appImagePath) async {
+    final entryPath = _entryPath;
+    if (entryPath == null) return null;
+    final entry = await _readEntry(entryPath);
+    if (entry == null || !_isOurs(entry)) return null;
+    final tryExec = entry['TryExec'];
+    if (tryExec == null || !p.equals(tryExec, appImagePath)) return null;
+    final version = entry[kAddedVersionKey];
+    final build = int.tryParse(entry[kAddedBuildKey] ?? '');
+    if (version == null || build == null) return null;
+    return AppVersion(version, build);
+  }
+
+  /// Rewrites the version keys of App Studio's entry at [entryPath]: drops
+  /// them, then writes [version] after the marker when there is one. Every
+  /// other line stays as it was.
+  Future<void> _setRecordedVersion(
+    String entryPath,
+    AppVersion? version,
+  ) async {
     final file = File(entryPath);
     if (!await file.exists()) return;
     try {
       final contents = await file.readAsString();
       final entry = parseDesktopEntry(contents);
-      if (!_isOurs(entry) ||
-          (!entry.containsKey(kAddedVersionKey) &&
-              !entry.containsKey(kAddedBuildKey))) {
-        return;
-      }
+      if (!_isOurs(entry)) return;
       final kept = <String>[];
       var inGroup = false;
       for (final line in contents.split('\n')) {
@@ -399,16 +429,25 @@ class DesktopIntegration {
         } else if (inGroup) {
           final key = line.split('=').first.trim();
           if (key == kAddedVersionKey || key == kAddedBuildKey) continue;
+          if (key == kAddedByKey && version != null) {
+            kept
+              ..add(line)
+              ..add('$kAddedVersionKey=${_escapeString(version.version)}')
+              ..add('$kAddedBuildKey=${version.build}');
+            continue;
+          }
         }
         kept.add(line);
       }
+      final updated = kept.join('\n');
+      if (updated == contents) return;
       final temporary = File('$entryPath.$pid.part');
-      await temporary.writeAsString(kept.join('\n'), flush: true);
+      await temporary.writeAsString(updated, flush: true);
       await temporary.rename(entryPath);
     } on FileSystemException catch (e) {
-      debugPrint('Could not drop the recorded version from $entryPath: $e');
+      debugPrint('Could not record the version in $entryPath: $e');
     } on FormatException catch (e) {
-      debugPrint('Could not drop the recorded version from $entryPath: $e');
+      debugPrint('Could not record the version in $entryPath: $e');
     }
   }
 
@@ -491,11 +530,9 @@ class DesktopIntegration {
     );
   }
 
-  /// Starts the copy in the app menu once this process has ended, so the two
-  /// never run at once — they share the preview's browser profile, which only
-  /// one can hold. The caller quits right after. A copy that has not ended
-  /// after 30 s starts anyway. [afterPid] is the process to wait for; tests
-  /// hand it one of their own, since this one never ends during a test.
+  /// Starts the copy in the app menu once this process has ended (see
+  /// [startAfterExit]); the caller quits right after. [afterPid] is the
+  /// process to wait for; tests hand it one of their own.
   Future<void> openAddedCopyAfterExit({
     @visibleForTesting int? afterPid,
   }) async {
@@ -503,14 +540,7 @@ class DesktopIntegration {
     if (target == null || !await File(target).exists()) {
       throw FileSystemException('The AppImage is gone', target);
     }
-    await Process.start('/bin/sh', [
-      '-c',
-      r'i=0; while kill -0 "$1" 2>/dev/null && [ "$i" -lt 150 ]; do '
-          r'sleep 0.2; i=$((i + 1)); done; exec "$2"',
-      'sh',
-      '${afterPid ?? pid}',
-      target,
-    ], mode: ProcessStartMode.detached);
+    await startAfterExit(target, afterPid: afterPid);
   }
 
   /// A rename where it can be; across file systems a copy to a temporary

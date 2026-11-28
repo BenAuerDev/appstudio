@@ -24,6 +24,8 @@ import 'session/project_session.dart';
 import 'theme/app_theme.dart';
 import 'theme/theme_controller.dart';
 import 'toolchain/toolchain_controller.dart';
+import 'update/linux/linux_update_commands.dart';
+import 'update/linux/linux_updater.dart';
 import 'update/session_teardown.dart';
 import 'update/update_controller.dart';
 import 'platform/macos_app_menu.dart';
@@ -75,6 +77,8 @@ Future<void> main() async {
   // background; the menu item appears when it lands.
   final desktopIntegration = DesktopIntegrationController();
   if (currentHost.isLinux) unawaited(desktopIntegration.refresh());
+  // Linux has no Sparkle: updates are App Studio's own (lib/update/linux/).
+  final linuxUpdater = currentHost.isLinux ? LinuxUpdater() : null;
 
   // Never blocks launch: create() swallows its own failures and reports the
   // updater as unavailable.
@@ -82,6 +86,7 @@ Future<void> main() async {
     process: process,
     agent: agent,
     cloud: cloud,
+    linux: linuxUpdater,
   );
 
   // Installed before the first event so nothing fires into the no-op default.
@@ -115,6 +120,7 @@ Future<void> main() async {
       previewMode: previewMode,
       logView: logView,
       desktopIntegration: desktopIntegration,
+      linuxUpdater: linuxUpdater,
     ),
   );
 }
@@ -133,6 +139,7 @@ class AppStudioApp extends StatefulWidget {
     required this.previewMode,
     required this.logView,
     required this.desktopIntegration,
+    this.linuxUpdater,
   });
 
   final ThemeController themeController;
@@ -146,6 +153,10 @@ class AppStudioApp extends StatefulWidget {
   final PreviewModeController previewMode;
   final LogViewController logView;
   final DesktopIntegrationController desktopIntegration;
+
+  /// The updater on Linux; null on macOS and Windows, where Sparkle and
+  /// WinSparkle update.
+  final LinuxUpdater? linuxUpdater;
 
   @override
   State<AppStudioApp> createState() => _AppStudioAppState();
@@ -198,6 +209,14 @@ class _AppStudioAppState extends State<AppStudioApp> {
     widget.desktopIntegration,
   );
 
+  /// Linux: the automatic update check, and the timer that runs it hourly
+  /// (it looks only once the last check is a day old).
+  late final _linuxUpdates = switch (widget.linuxUpdater) {
+    final updater? => LinuxUpdateSchedule(updater),
+    null => null,
+  };
+  Timer? _linuxUpdateTimer;
+
   @override
   void initState() {
     super.initState();
@@ -244,6 +263,12 @@ class _AppStudioAppState extends State<AppStudioApp> {
     if (!_needsToolchainSetup) {
       WidgetsBinding.instance.addPostFrameCallback(
         (_) => _offerAddToApplications(),
+      );
+    }
+    if (_linuxUpdates != null) {
+      _linuxUpdateTimer = Timer.periodic(
+        const Duration(hours: 1),
+        (_) => _withNavigatorContext(_checkForUpdatesIfDue),
       );
     }
     // Clear anything a crashed install left behind. Fire and forget, so it
@@ -307,7 +332,16 @@ class _AppStudioAppState extends State<AppStudioApp> {
         themeController: widget.themeController,
         logView: widget.logView,
         onNewProject: _showNewProjectScreen,
-        onCheckForUpdates: () => unawaited(widget.updates.checkForUpdates()),
+        onCheckForUpdates: switch (widget.linuxUpdater) {
+          final updater? => () => _withNavigatorContext(
+            (context) => checkForUpdatesOnLinux(
+              context,
+              updater,
+              onChecked: () => unawaited(widget.updates.refresh()),
+            ),
+          ),
+          null => () => unawaited(widget.updates.checkForUpdates()),
+        },
         onUninstall: _confirmUninstall,
         onAbout: _showAbout,
         canCheckForUpdates: () => widget.updates.state.canCheck,
@@ -374,17 +408,31 @@ class _AppStudioAppState extends State<AppStudioApp> {
 
   /// Linux, as an AppImage nobody added to the app menu: asks whether to,
   /// once per run, over the start page and never among setup's dialogs.
+  ///
+  /// Then, on Linux, the automatic update check, so the two questions come
+  /// one after the other rather than on top of each other.
   void _offerAddToApplications() {
     if (!mounted) return;
-    _withNavigatorContext(
-      (context) => _addToApplications.offerOnce(
-        context,
-        onStartPage: () =>
-            mounted &&
-            widget.session.projectPath == null &&
-            !_needsToolchainSetup &&
-            _uninstalled == null,
-      ),
+    _withNavigatorContext((context) async {
+      await _addToApplications.offerOnce(context, onStartPage: _onStartPage);
+      if (context.mounted) await _checkForUpdatesIfDue(context);
+    });
+  }
+
+  /// Whether the start page is what the window shows: no project open, no
+  /// setup, no uninstall.
+  bool _onStartPage() =>
+      mounted &&
+      widget.session.projectPath == null &&
+      !_needsToolchainSetup &&
+      _uninstalled == null;
+
+  /// Linux: the daily update check, over the start page only.
+  Future<void> _checkForUpdatesIfDue(BuildContext context) async {
+    await _linuxUpdates?.checkIfDue(
+      context,
+      onStartPage: _onStartPage,
+      onChecked: () => unawaited(widget.updates.refresh()),
     );
   }
 
@@ -551,6 +599,7 @@ class _AppStudioAppState extends State<AppStudioApp> {
 
   @override
   void dispose() {
+    _linuxUpdateTimer?.cancel();
     _lifecycle?.dispose();
     widget.updates.removeListener(_syncMenu);
     widget.toolchains.removeListener(_onToolchainsChanged);

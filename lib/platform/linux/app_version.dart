@@ -20,6 +20,13 @@ class AppVersion {
   String toString() => '$version+$build';
 }
 
+/// A version for a dialog that names two of them: `0.4.2`, with the build
+/// when both share the version and only the build tells them apart.
+String copyVersionLabel(AppVersion version, AppVersion other) =>
+    version.version == other.version
+    ? '${version.version} (build ${version.build})'
+    : version.version;
+
 /// Another copy of App Studio than the one in the app menu is running: one
 /// downloaded again, say. Only for a copy App Studio added itself; Gear
 /// Lever updates its own.

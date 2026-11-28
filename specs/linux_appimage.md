@@ -20,17 +20,17 @@ Studio.
 | Part | What | Where | State |
 |---|---|---|---|
 | A | **Add to Applications**: on start, until it is in the app menu, App Studio offers to add itself; **Remove from Applications** undoes it | App Studio (Dart), Linux only | being built |
-| B | Updates from inside the app | App Studio and Serverpod's release pipeline | later (below) |
+| B | **Updates from inside the app**: Help → Check for Updates, and a daily check, replace the AppImage in place | App Studio (Dart), `tool/linux/`; feed and key are Serverpod's | being built |
 | C | **A clear message on a system that cannot load App Studio**, instead of nothing happening | `AppRun` in the AppImage | done |
 | D | **Download page text** for Serverpod's website | text in this spec | written; needs A |
 | E | Uninstall removes what A added | App Studio (Dart) | with PR 5 |
 
-**B, updates, come later.** Until then **Help → Check for Updates** stays
-greyed out on Linux, and the AppImage carries no update information: where
-builds are hosted, and with it the `.zsync` URL Gear Lever would read
-(`specs/linux_port.md` 4.5), is Serverpod's to decide together with the
-updater. Part A's fixed path (A2) lets that updater replace the file in place
-without touching the menu entry.
+**B is built and tested against a local feed.** Where builds are hosted,
+the feed's URL and the signing key are Serverpod's to decide: until
+`linux/release.json` names a feed and a key, a release build reports updates
+as unavailable, as a build without them does on Windows. The AppImage still
+carries no `.zsync` update information for Gear Lever; that is a separate
+choice for the same people (`specs/linux_port.md` 4.5).
 
 This spec covers the AppImage. Whether the `.deb` and `.rpm` of
 `specs/linux_port.md` (4.5) still follow is open with Serverpod.
@@ -307,6 +307,103 @@ instance of it. Both are left as they are.
 
 ---
 
+## B. Updates from inside the app
+
+macOS updates through Sparkle and Windows through WinSparkle; Linux has no
+such library, so App Studio does the same job in Dart, with the same feed
+format and the same rules.
+
+| # | Decision |
+|---|---|
+| B1 | **The feed is a Sparkle appcast**, like the macOS and Windows ones: one `<item>` per release, its `<enclosure>` carrying `url`, `length`, `sparkle:version` (the build number, which orders releases), `sparkle:shortVersionString`, `sparkle:os="linux-x86_64"` and `sparkle:edSignature`. |
+| B2 | **Every download is checked against an Ed25519 signature** over the whole file, as Sparkle and WinSparkle check theirs. The public key is compiled in; the private one never leaves Serverpod. A key pair from `openssl genpkey -algorithm ed25519` works, and so does signing with `openssl pkeyutl -sign -rawin`. |
+| B3 | **The feed URL and public key live in `linux/release.json`** (`appcastUrl`, `eddsaPublicKey`), as Windows keeps them in `windows/release.json`. `build_appimage.sh` passes them to `flutter build` as `--dart-define`s; `APPSTUDIO_APPCAST_URL` and `APPSTUDIO_EDDSA_PUBLIC_KEY` in the environment override them, for a local feed. Empty, updates are unavailable. |
+| B4 | **The build number is pubspec's**, the same `+N` the macOS build uses, so `make set_version` covers Linux too. |
+| B5 | **The AppImage is replaced in place**, at whatever path it runs from, and started again from there. A menu entry, App Studio's or another tool's, keeps working because the path stays the same. After an Add in the same run, that is `~/AppImages/AppStudio-x86_64.AppImage`, although `$APPIMAGE` still names the folder the file came from; it is taken only while App Studio's entry names it and records the running build, so another copy left there is never replaced. |
+| B6 | **https only**, for the feed and every download: the signature covers the file, not the feed, so over plain http anyone in between could serve an older signed build as a newer one. Plain http is accepted only to this machine (`localhost`, `127/8`, `::1`) or a private IPv4 network (`10/8`, `172.16/12`, `192.168/16`), written in dotted decimal, which only a local test feed uses. The app, `build_appimage.sh` and `appcast.sh` check the same rule; the scripts also refuse a few odd spellings (percent-escaped hosts) the app lets through to the very host it checked. |
+
+### When it checks
+
+- **Help → Check for Updates...**, any time. It says when App Studio is up
+  to date, and why when the check fails.
+- **Automatically, once a day** (Help → Check for Updates Automatically,
+  on by default, as on macOS): on start after the Add question, and every
+  hour after that whenever the last check is a day old. Only over the start
+  page: a project open means a running server, and an update dialog there
+  would interrupt work, as Sparkle's busy veto avoids on macOS and Windows.
+  An automatic check that finds nothing, or fails, says nothing.
+- Only when running as an AppImage (part A's condition 1). A development
+  build, or one without a feed, shows "Check for Updates (unavailable in this
+  build)".
+
+### The dialog
+
+```text
+App Studio 0.4.2 is available
+
+You have 0.4.1. Installing restarts App Studio, which stops the server if
+it is running.
+
+[Skip This Version]                    [Later]  [Install and Restart]
+```
+
+**Skip This Version** stops the automatic check offering that build; Help →
+Check for Updates still offers it, as Sparkle does. **Install and Restart**
+downloads with a progress bar and Cancel, then checks and installs:
+
+1. **Downloads** to a hidden file beside the AppImage
+   (`.AppStudio-update.part`), so the final rename stays on one file system
+   and is atomic. The file is created anew, never opened through whatever
+   is in its place, and one an interrupted run left behind is deleted by the
+   next check. One download runs at a time: the Help menu stays usable under
+   the dialog, so a second one is refused, and a check leaves a running
+   download's file alone. A folder App Studio cannot write to fails here, before
+   anything is downloaded, and says to move the AppImage to a folder of the
+   user's own, such as `~/AppImages` (Help → Add to Applications).
+2. **Checks** the length and the signature (B2). A mismatch deletes the
+   file and says so; nothing is replaced.
+3. **Replaces** the AppImage: made executable, then renamed over the running
+   file. The running copy is unaffected, as part A's move showed: its image
+   stays mounted.
+4. **Updates App Studio's menu entry**, when it names this file: its
+   recorded version becomes the new one (part A, Another copy).
+5. **Restarts**: the same quit as File → Quit, teardown included, and the
+   new file starts once this process has ended (part A's Open).
+
+A failure in steps 1 to 3 leaves the running AppImage as it was and shows
+the reason with **Try Again**. A failed restart (step 5) comes after the
+replacement, so the dialog says the new version is installed, and to quit
+and start it again, with nothing to try again.
+
+### Gear Lever and other tools
+
+Replacing the file in place keeps their menu entries working. Gear Lever
+shows the version it read when it added the file until it looks again; its
+own update (through `.zsync`) stays a separate route, and it stays off until
+the AppImage carries update information.
+
+### Where it lives
+
+- `lib/update/linux/appcast.dart`: reads the feed and picks the newest
+  item for Linux; free of `dart:io`.
+- `lib/update/linux/linux_updater.dart`: the configuration, the check, the
+  download, the signature, the replacement and the preferences (automatic
+  checks, last check, skipped build), with the environment, the HTTP client
+  and the paths injected so the tests run on every host.
+- `lib/update/linux/linux_update_dialog.dart`: the dialog, and
+  `update_signals.dart`, what it and the updater tell each other (a
+  cancellation, an update installed but not started); both free of
+  `dart:io`.
+- `lib/update/linux/linux_update_commands.dart`: what Help and the daily
+  check run.
+- `UpdateController` reads its state from `LinuxUpdater` on Linux, so the
+  menu, About and analytics see the version as on the other two systems.
+- `tool/linux/appcast.sh`: signs an AppImage and adds it to a feed, newest
+  first, refusing a build number the feed already has or has passed, and
+  checking the signature against the key in `linux/release.json`.
+
+---
+
 ## C. A system that cannot load App Studio (done)
 
 On a system with an older glibc (Ubuntu 22.04, Debian 12, Linux Mint 21), or
@@ -409,3 +506,27 @@ there.
     an older one and Open, and the newer copy comes up once the older one
     has quit.
 - **Omarchy:** the same Add and Remove, through Walker.
+- **Part B, unit tests on every host:** the feed (newest Linux item, other
+  systems and incomplete items left out, the namespace rather than the
+  prefix, https only); the updater against a fake HTTP server with real
+  Ed25519 signatures (a wrong signature, another key, another length, a
+  cancel, one download at a time, a folder it cannot write, a link in the
+  download's place, another copy in `~/AppImages` never taken, an
+  http feed or download, a leftover download cleared, the replacement and
+  restart, the new version recorded in App Studio's entry, the file in
+  `~/AppImages` after an Add in the same run, and a signature made by
+  `openssl` accepted); the dialog's phases; the daily check (due or not,
+  only over the start page, a skipped build and a newer one).
+- **Part B, Ubuntu VM** with two builds made against a local feed
+  (`APPSTUDIO_APPCAST_URL` and `APPSTUDIO_EDDSA_PUBLIC_KEY`, never
+  committed) and a feed from `appcast.sh` naming the newer one:
+  - start the older from `~/Downloads`, Add, and the update is offered
+    right after; Install and Restart; the newer build comes up from
+    `~/AppImages`, its entry records the new version, and no
+    `.AppStudio-update.part` is left;
+  - Help → Check for Updates in the newer build says it is up to date;
+  - in an older copy: Cancel during the download goes back to the offer
+    and leaves no file; Skip This Version; a feed whose signature does not
+    match is refused and nothing is replaced;
+  - with a project open and the server running, Install and Restart stops
+    the server and the newer build starts.

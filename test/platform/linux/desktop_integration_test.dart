@@ -724,6 +724,49 @@ Exec=appstudio --extra
     });
   });
 
+  group('an update in place', () {
+    test('records the new version in App Studio\'s entry', () async {
+      await integration().add();
+      await integration().recordUpdatedVersion(
+        target(),
+        const AppVersion('0.4.2', 26),
+      );
+
+      final entry = parseDesktopEntry(await File(entryPath()).readAsString());
+      expect(entry[kAddedVersionKey], '0.4.2');
+      expect(entry[kAddedBuildKey], '26');
+      expect(entry[kAddedByKey], kAddedByValue);
+      expect(entry['TryExec'], target());
+    });
+
+    test('leaves an entry for another file alone', () async {
+      await integration().add();
+      final before = await File(entryPath()).readAsString();
+      await integration().recordUpdatedVersion(
+        p.join(home, 'elsewhere.AppImage'),
+        const AppVersion('0.4.2', 26),
+      );
+
+      expect(await File(entryPath()).readAsString(), before);
+    });
+
+    test('leaves an entry App Studio did not write alone', () async {
+      const theirs =
+          '[Desktop Entry]\nName=App Studio\nExec=/opt/x\nTryExec=/opt/x\n';
+      await writeEntry(
+        p.dirname(entryPath()),
+        'dev.serverpod.appstudio.desktop',
+        theirs,
+      );
+      await integration().recordUpdatedVersion(
+        '/opt/x',
+        const AppVersion('0.4.2', 26),
+      );
+
+      expect(await File(entryPath()).readAsString(), theirs);
+    });
+  });
+
   group('remove', () {
     test('removes the entry and icons, and leaves the AppImage', () async {
       await integration().add();
