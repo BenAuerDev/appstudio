@@ -111,6 +111,15 @@ if [[ -n "$eddsa_public_key" ]] &&
   echo "The update public key is not base64 of 32 bytes." >&2
   exit 1
 fi
+# Both or neither: a build with only one never checks for updates, and
+# nothing else would notice until users stopped getting them.
+if [[ -n "$appcast_url" && -z "$eddsa_public_key" ]] ||
+  [[ -z "$appcast_url" && -n "$eddsa_public_key" ]]; then
+  echo "In-app updates need both appcastUrl and eddsaPublicKey" \
+    "(linux/release.json or APPSTUDIO_APPCAST_URL /" \
+    "APPSTUDIO_EDDSA_PUBLIC_KEY), or neither." >&2
+  exit 1
+fi
 
 # --- Build -----------------------------------------------------------------
 
@@ -130,7 +139,7 @@ if [[ "${SKIP_BUILD:-}" != 1 ]]; then
   if [[ -n "$appcast_url" && -n "$eddsa_public_key" ]]; then
     echo "In-app updates from $appcast_url"
   else
-    echo "In-app updates off: no feed or no key (linux/release.json)"
+    echo "In-app updates off: no feed and no key (linux/release.json)"
   fi
   (cd "$root" && "$flutter" build linux --release \
     --dart-define="APPSTUDIO_APPCAST_URL=$appcast_url" \
